@@ -1,50 +1,98 @@
-# Welcome to your Expo app 👋
+# Mess App
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A **mess management application** built with **Expo (React Native)**.  
+This app helps manage meals, expenses, members, and notifications for a mess/hostel.
 
-## Get started
+---
 
-1. Install dependencies
+## Features
 
-   ```bash
-   npm install
-   ```
+- Add, edit, and track **members**.
+- Manage **deposits and expenses**.
+- Track **meals and fines**.
+- Mess notifications for members.
+- Works on **Android & iOS** using Expo Go.
+- Clean, modern UI with **expo-router**.
 
-2. Start the app
+---
 
+## Screenshots
+
+<!-- Add screenshots here -->
+
+![App Icon](./assets/images/icon.png)
+![Splash Screen](./assets/images/splash-icon.png)
+
+---
+
+## Installation
+
+1. Clone the repository:
+
+```bash
+git clone https://github.com/pappu-dey/mess-app.git
+cd mess-app
+```
+
+npm install
+
+# or
+
+yarn install
+
+npx expo start
+
+---
+
+## Prerequisites
+
+- **Node.js** (version 14 or higher) - Download from [nodejs.org](https://nodejs.org/).
+- **Expo CLI** - Install globally via npm: `npm install -g @expo/cli`.
+- **Expo Go** app on your mobile device for testing (available on Android and iOS app stores).
+- A code editor like VS Code.
+
+---
+
+## Usage
+
+1. Start the development server:
    ```bash
    npx expo start
    ```
+2. Scan the QR code with the Expo Go app on your phone to run the app.
+3. Navigate through the app to manage members, deposits, expenses, meals, and notifications.
+4. For production build:
+   ```bash
+   npx expo build:android  # For Android APK
+   npx expo build:ios      # For iOS (requires Apple Developer account)
+   ```
 
-In the output, you'll find options to open the app in a
+---
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## Contributing
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+We welcome contributions! To get started:
 
-## Get a fresh project
+1. Fork the repository.
+2. Create a new branch for your feature: `git checkout -b feature-name`.
+3. Make your changes and commit: `git commit -m 'Add new feature'`.
+4. Push to the branch: `git push origin feature-name`.
+5. Open a Pull Request.
 
-When you're ready, run:
+Please ensure your code follows the project's coding standards and includes tests where applicable.
 
-```bash
-npm run reset-project
-```
+---
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## License
 
-## Learn more
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-To learn more about developing your project with Expo, look at the following resources:
+---
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+## Contact
 
-## Join the community
+For questions or support, reach out to:
 
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+- **Author**: Pappu Dey
+- **Email**: deypappu144@gmail.com
+- **GitHub**: [pappu-dey](https://github.com/pappu-dey)
