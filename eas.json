@@ -1,0 +1,31 @@
+{
+  "cli": {
+    "version": ">=16.28.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "android": {
+        "newArchEnabled": true
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "newArchEnabled": true
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "android": {
+        "buildType": "apk",
+        "newArchEnabled": true
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
