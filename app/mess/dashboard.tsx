@@ -152,7 +152,8 @@ export default function Dashboard() {
               "entries",
             ),
           ),
-          getDocs(collection(db, "messes", messId, "members")),
+          // Fetch members from users collection where messId matches
+          getDocs(query(collection(db, "users"), where("messId", "==", messId))),
         ]);
 
         console.log("=== DOCUMENTS FETCHED ===");
@@ -393,11 +394,11 @@ export default function Dashboard() {
       (error) => console.error("Transactions listener error:", error),
     );
 
-    // Listen to members changes
+    // Listen to members changes in users collection
     const unsubscribeMembers = onSnapshot(
-      collection(db, "messes", messId, "members"),
+      query(collection(db, "users"), where("messId", "==", messId)),
       () => {
-        console.log("Members data changed");
+        console.log("Members data changed (users collection)");
         debouncedRecalculate();
       },
       (error) => console.error("Members listener error:", error),

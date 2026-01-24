@@ -251,6 +251,9 @@ export default function CreateMess() {
 
       // Update user document with mess info
       const userRef = doc(db, "users", user.uid);
+      const userDoc = await getDoc(userRef);
+      const userData = userDoc.data();
+      
       await setDoc(
         userRef,
         {
@@ -260,6 +263,16 @@ export default function CreateMess() {
         },
         { merge: true }
       );
+
+      // Create member document in mess subcollection for statistics
+      const memberRef = doc(db, "messes", newMessId, "members", user.uid);
+      await setDoc(memberRef, {
+        name: userData?.name || user.displayName || "Manager",
+        email: userData?.email || user.email || "",
+        role: "manager",
+        joinedAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+      }, { merge: true });
 
       setGeneratedMessId(newMessId);
       setShowSuccessModal(true);

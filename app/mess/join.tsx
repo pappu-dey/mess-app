@@ -218,6 +218,9 @@ export default function JoinMess() {
 
       // Update user document with mess info
       const userRef = doc(db, "users", user.uid);
+      const userDoc = await getDoc(userRef);
+      const userData = userDoc.data();
+      
       await setDoc(
         userRef,
         {
@@ -227,6 +230,16 @@ export default function JoinMess() {
         },
         { merge: true }
       );
+
+      // Create member document in mess subcollection for statistics
+      const memberRef = doc(db, "messes", messIdUpper, "members", user.uid);
+      await setDoc(memberRef, {
+        name: userData?.name || user.displayName || "Member",
+        email: userData?.email || user.email || "",
+        role: "member",
+        joinedAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+      }, { merge: true });
 
       // Success - redirect to dashboard
       router.replace("/mess/dashboard");

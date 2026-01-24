@@ -119,7 +119,9 @@ export default function Deposits() {
   const fetchMembers = async () => {
     if (!messId) return;
     try {
-      const snap = await getDocs(collection(db, "messes", messId, "members"));
+      // Fetch all users who have this messId
+      const q = query(collection(db, "users"), where("messId", "==", messId));
+      const snap = await getDocs(q);
       const membersList = snap.docs.map((d) => ({
         id: d.id,
         name: d.data().name,
@@ -128,7 +130,8 @@ export default function Deposits() {
       }));
       setMembers(membersList.sort((a, b) => a.name.localeCompare(b.name)));
     } catch (error) {
-      console.error(error);
+      console.error("Error fetching members:", error);
+      Alert.alert("Error", "Failed to load members");
     }
   };
 
