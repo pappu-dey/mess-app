@@ -1,29 +1,25 @@
 import { useRouter } from "expo-router";
 import {
   collection,
-  deleteDoc,
   doc,
   getDoc,
   getDocs,
   increment,
   query,
-  serverTimestamp,
-  setDoc,
   updateDoc,
   where,
 } from "firebase/firestore";
+import { Crown, Eye, Trash2 } from "lucide-react-native";
+
 import { useCallback, useEffect, useState } from "react";
+
 import {
   ActivityIndicator,
   Alert,
   FlatList,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
   RefreshControl,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -46,10 +42,7 @@ export default function MembersScreen() {
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
 
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [emailOrUid, setEmailOrUid] = useState("");
   const [currentUserRole, setCurrentUserRole] = useState<Role>("member");
 
   useEffect(() => {
@@ -68,14 +61,14 @@ export default function MembersScreen() {
       const snap = await getDoc(doc(db, "users", user.uid));
       const data = snap.data();
 
-      if (data?.role !== "manager") {
-        Alert.alert("Access denied", "Only managers can manage members");
+      if (!data?.messId) {
+        Alert.alert("Error", "You are not part of any mess");
         router.back();
         return;
       }
 
       setMessId(data.messId);
-      setCurrentUserRole(data.role);
+      setCurrentUserRole(data.role || "member");
       await fetchMembers(data.messId);
     } catch (error) {
       console.error("Init error:", error);
@@ -87,10 +80,16 @@ export default function MembersScreen() {
 
   const fetchMembers = async (mid: string) => {
     try {
-      const snap = await getDocs(collection(db, "messes", mid, "members"));
+      // Fetch all users who have this messId
+      const q = query(collection(db, "users"), where("messId", "==", mid));
+      const snap = await getDocs(q);
+
       const membersList = snap.docs.map((d) => ({
         id: d.id,
-        ...d.data(),
+        name: d.data().name,
+        email: d.data().email,
+        role: d.data().role,
+        joinedAt: d.data().joinedAt || null,
       })) as Member[];
 
       // Sort: manager first, then current user, then by name
@@ -115,75 +114,12 @@ export default function MembersScreen() {
     setRefreshing(false);
   }, [messId]);
 
-  const addMember = async () => {
-    const trimmedInput = emailOrUid.trim();
-
-    if (!trimmedInput) {
-      Alert.alert("Error", "Please enter an email or user ID");
+  const transferManagership = (member: Member) => {
+    if (currentUserRole !== "manager") {
+      Alert.alert("Access Denied", "Only managers can transfer managership");
       return;
     }
 
-    setSubmitting(true);
-
-    try {
-      let userDoc;
-
-      if (trimmedInput.includes("@")) {
-        const q = query(
-          collection(db, "users"),
-          where("email", "==", trimmedInput),
-        );
-        const s = await getDocs(q);
-        userDoc = s.docs[0];
-      } else {
-        const s = await getDoc(doc(db, "users", trimmedInput));
-        if (s.exists()) userDoc = s;
-      }
-
-      if (!userDoc) {
-        Alert.alert("User not found", "No user exists with this email or ID");
-        return;
-      }
-
-      const memberRef = doc(db, "messes", messId, "members", userDoc.id);
-      if ((await getDoc(memberRef)).exists()) {
-        Alert.alert("Already a member", "This user is already in your mess");
-        return;
-      }
-
-      const userData = userDoc.data();
-
-      // New members are always added as "member" role
-      await setDoc(memberRef, {
-        name: userData.name,
-        email: userData.email,
-        role: "member",
-        joinedAt: serverTimestamp(),
-      });
-
-      await updateDoc(doc(db, "users", userDoc.id), {
-        messId,
-        role: "member",
-      });
-
-      await updateDoc(doc(db, "messes", messId), {
-        memberCount: increment(1),
-      });
-
-      setShowAddModal(false);
-      setEmailOrUid("");
-      await fetchMembers(messId);
-
-      Alert.alert("Success", `${userData.name} has been added as a member`);
-    } catch (error) {
-      console.error("Add member error:", error);
-      Alert.alert("Error", "Failed to add member. Please try again.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const transferManagership = (member: Member) => {
     Alert.alert(
       "Transfer Managership",
       `Are you sure you want to transfer managership to ${member.name}? You will become a regular member.`,
@@ -198,20 +134,11 @@ export default function MembersScreen() {
               if (!currentUser) return;
 
               // Update new manager
-              await updateDoc(doc(db, "messes", messId, "members", member.id), {
-                role: "manager",
-              });
               await updateDoc(doc(db, "users", member.id), {
                 role: "manager",
               });
 
               // Demote current manager to member
-              await updateDoc(
-                doc(db, "messes", messId, "members", currentUser.uid),
-                {
-                  role: "member",
-                },
-              );
               await updateDoc(doc(db, "users", currentUser.uid), {
                 role: "member",
               });
@@ -237,6 +164,11 @@ export default function MembersScreen() {
   };
 
   const deleteMember = (member: Member) => {
+    if (currentUserRole !== "manager") {
+      Alert.alert("Access Denied", "Only managers can remove members");
+      return;
+    }
+
     if (member.role === "manager") {
       Alert.alert(
         "Cannot Remove",
@@ -247,7 +179,7 @@ export default function MembersScreen() {
 
     Alert.alert(
       "Remove Member",
-      `Are you sure you want to remove ${member.name}? This action cannot be undone.`,
+      `Are you sure you want to remove ${member.name}? This will remove them from the mess.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -255,16 +187,22 @@ export default function MembersScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              await deleteDoc(doc(db, "messes", messId, "members", member.id));
+              // Remove mess assignment from user
               await updateDoc(doc(db, "users", member.id), {
                 messId: null,
                 role: null,
               });
+
+              // Update mess member count
               await updateDoc(doc(db, "messes", messId), {
                 memberCount: increment(-1),
               });
+
               await fetchMembers(messId);
-              Alert.alert("Success", `${member.name} has been removed`);
+              Alert.alert(
+                "Success",
+                `${member.name} has been removed from the mess`,
+              );
             } catch (error) {
               console.error("Delete member error:", error);
               Alert.alert("Error", "Failed to remove member");
@@ -273,11 +211,6 @@ export default function MembersScreen() {
         },
       ],
     );
-  };
-
-  const closeModal = () => {
-    setShowAddModal(false);
-    setEmailOrUid("");
   };
 
   if (loading) {
@@ -291,8 +224,18 @@ export default function MembersScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Members</Text>
-      <Text style={styles.subTitle}>Total Members: {members.length}</Text>
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.title}>Members</Text>
+          <Text style={styles.subTitle}>Total Members: {members.length}</Text>
+        </View>
+        {currentUserRole !== "manager" && (
+          <View style={styles.viewOnlyBadge}>
+            <Eye size={14} color="#6B7280" />
+            <Text style={styles.viewOnlyText}>View Only</Text>
+          </View>
+        )}
+      </View>
 
       <FlatList
         data={members}
@@ -309,7 +252,7 @@ export default function MembersScreen() {
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>No members yet</Text>
             <Text style={styles.emptySubtext}>
-              Tap the + button to add your first member
+              Members will appear here when they join the mess
             </Text>
           </View>
         }
@@ -336,99 +279,45 @@ export default function MembersScreen() {
                     </Text>
                     {isManager && (
                       <View style={styles.managerBadge}>
-                        <Text style={styles.managerBadgeText}>👑 Manager</Text>
+                        <Crown size={14} color="#FACC15" />
+                        <Text style={styles.managerBadgeText}>Manager</Text>
                       </View>
                     )}
                   </View>
                   <Text style={styles.memberEmail}>{item.email}</Text>
                 </View>
 
-                <View style={styles.actionButtons}>
-                  {!isManager && currentUserRole === "manager" && (
-                    <TouchableOpacity
-                      onPress={() => transferManagership(item)}
-                      style={styles.transferButton}
-                    >
-                      <Text style={styles.transferIcon}>👑</Text>
-                    </TouchableOpacity>
-                  )}
-                  {!isManager && (
-                    <TouchableOpacity
-                      onPress={() => deleteMember(item)}
-                      style={styles.deleteButton}
-                    >
-                      <Text style={styles.deleteIcon}>🗑️</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
+                {/* Only show action buttons for managers */}
+                {currentUserRole === "manager" && (
+                  <View style={styles.actionButtons}>
+                    {!isManager && (
+                      <>
+                        {/* Transfer Managership */}
+                        <TouchableOpacity
+                          onPress={() => transferManagership(item)}
+                          style={styles.transferButton}
+                          activeOpacity={0.7}
+                        >
+                          <Crown size={18} color="#FACC15" />
+                        </TouchableOpacity>
+
+                        {/* Delete Member */}
+                        <TouchableOpacity
+                          onPress={() => deleteMember(item)}
+                          style={styles.deleteButton}
+                          activeOpacity={0.7}
+                        >
+                          <Trash2 size={18} color="#EF4444" />
+                        </TouchableOpacity>
+                      </>
+                    )}
+                  </View>
+                )}
               </View>
             </View>
           );
         }}
       />
-
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => setShowAddModal(true)}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.fabText}>＋</Text>
-      </TouchableOpacity>
-
-      <Modal
-        transparent
-        visible={showAddModal}
-        animationType="slide"
-        onRequestClose={closeModal}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-          style={styles.modalOverlay}
-        >
-          <TouchableOpacity
-            style={styles.modalBackdrop}
-            activeOpacity={1}
-            onPress={closeModal}
-          />
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Add New Member</Text>
-            <Text style={styles.modalSubtitle}>
-              New members will be added as regular members
-            </Text>
-
-            <TextInput
-              placeholder="Email or User ID"
-              placeholderTextColor="#94A3B8"
-              value={emailOrUid}
-              onChangeText={setEmailOrUid}
-              style={styles.input}
-              autoCapitalize="none"
-              autoCorrect={false}
-              editable={!submitting}
-            />
-
-            <TouchableOpacity
-              style={[styles.addBtn, submitting && styles.addBtnDisabled]}
-              onPress={addMember}
-              disabled={submitting}
-            >
-              {submitting ? (
-                <ActivityIndicator color="#FFF" />
-              ) : (
-                <Text style={styles.addBtnText}>Add Member</Text>
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.cancelBtn}
-              onPress={closeModal}
-              disabled={submitting}
-            >
-              <Text style={styles.cancelText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
     </View>
   );
 }
@@ -438,17 +327,44 @@ const styles = StyleSheet.create({
   centered: { justifyContent: "center", alignItems: "center" },
   loadingText: { color: "#94A3B8", marginTop: 12, fontSize: 14 },
 
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginTop: 30,
+    marginBottom: 16,
+  },
+
   title: {
     color: "#FFF",
     fontSize: 24,
     fontWeight: "800",
-    marginTop: 30,
     marginBottom: 8,
   },
   subTitle: {
     color: "#94A3B8",
     fontSize: 14,
-    marginBottom: 16,
+  },
+
+  viewOnlyBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+
+    backgroundColor: "rgba(245, 158, 11, 0.15)", // soft amber
+    borderWidth: 1,
+    borderColor: "rgba(245, 158, 11, 0.4)",
+
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999, // pill shape
+  },
+
+  viewOnlyText: {
+    color: "#F59E0B",
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 0.3,
   },
 
   memberRow: {
@@ -487,16 +403,26 @@ const styles = StyleSheet.create({
   },
   youTag: { color: "#6366F1", fontSize: 14 },
   managerBadge: {
-    backgroundColor: "#F59E0B",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+
+    backgroundColor: "rgba(245, 158, 11, 0.15)", // soft amber
+    borderWidth: 1,
+    borderColor: "rgba(245, 158, 11, 0.4)",
+
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 999, // pill
   },
+
   managerBadgeText: {
-    color: "#FFF",
+    color: "#F59E0B",
     fontSize: 11,
-    fontWeight: "700",
+    fontWeight: "600",
+    letterSpacing: 0.3,
   },
+
   memberEmail: {
     color: "#94A3B8",
     fontSize: 13,
@@ -507,95 +433,19 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   transferButton: {
-    padding: 8,
-    backgroundColor: "#F59E0B",
-    borderRadius: 6,
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: "rgba(250, 204, 21, 0.15)",
   },
+
+  deleteButton: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: "rgba(239, 68, 68, 0.15)",
+  },
+
   transferIcon: { fontSize: 18 },
-  deleteButton: { padding: 8 },
   deleteIcon: { fontSize: 20 },
-
-  fab: {
-    position: "absolute",
-    bottom: 64,
-    right: 24,
-    backgroundColor: "#6366F1",
-    width: 70,
-    height: 70,
-    borderRadius: 30,
-    alignItems: "center",
-    justifyContent: "center",
-    elevation: 8,
-    shadowColor: "#6366F1",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-  },
-  fabText: { color: "#FFF", fontSize: 32, fontWeight: "700" },
-
-  modalOverlay: {
-    flex: 1,
-    justifyContent: "flex-end",
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
-  },
-  modalCard: {
-    backgroundColor: "#1E293B",
-    padding: 20,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-  },
-  modalTitle: {
-    color: "#FFF",
-    fontSize: 20,
-    fontWeight: "700",
-    marginBottom: 4,
-  },
-  modalSubtitle: {
-    color: "#94A3B8",
-    fontSize: 13,
-    marginBottom: 16,
-  },
-
-  input: {
-    backgroundColor: "#0F172A",
-    color: "#FFF",
-    padding: 14,
-    borderRadius: 10,
-    marginBottom: 20,
-    fontSize: 15,
-    borderWidth: 1,
-    borderColor: "#334155",
-  },
-  addBtn: {
-    backgroundColor: "#10B981",
-    padding: 14,
-    borderRadius: 10,
-    alignItems: "center",
-    marginTop: 8,
-  },
-  addBtnDisabled: {
-    backgroundColor: "#065F46",
-    opacity: 0.6,
-  },
-  addBtnText: {
-    color: "#FFF",
-    fontWeight: "700",
-    fontSize: 16,
-  },
-
-  cancelBtn: {
-    marginTop: 12,
-    alignItems: "center",
-    padding: 12,
-  },
-  cancelText: {
-    color: "#94A3B8",
-    fontSize: 15,
-    fontWeight: "600",
-  },
 
   emptyContainer: {
     alignItems: "center",

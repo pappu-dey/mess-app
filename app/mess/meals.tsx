@@ -3,10 +3,14 @@ import {
   collection,
   doc,
   getDocs,
+  query,
   serverTimestamp,
   setDoc,
+  where,
 } from "firebase/firestore";
+import { Eye } from "lucide-react-native";
 import React, { useEffect, useState } from "react";
+
 import {
   ActivityIndicator,
   FlatList,
@@ -84,20 +88,18 @@ export default function MealScreen() {
   const loadMembers = async () => {
     if (!messId) return;
     try {
-      const snap = await getDocs(collection(db, "messes", messId, "members"));
+      // Fetch members from users collection where messId matches
+      const q = query(collection(db, "users"), where("messId", "==", messId));
+      const snap = await getDocs(q);
+
       const membersList = snap.docs.map((d) => ({
         id: d.id,
         name: d.data().name,
         email: d.data().email,
         role: d.data().role,
       }));
-      setMembers(membersList.sort((a, b) => a.name.localeCompare(b.name)));
 
-      // Auto-select current user if not manager
-      if (!isManager && user) {
-        const currentMember = membersList.find((m) => m.id === user.uid);
-        setSelectedMember(currentMember || null);
-      }
+      setMembers(membersList.sort((a, b) => a.name.localeCompare(b.name)));
     } catch (error) {
       console.error(error);
     }
@@ -160,16 +162,21 @@ export default function MealScreen() {
     setBreakfast(false);
     setLunch(false);
     setDinner(false);
-    if (isManager) {
-      setSelectedMember(null);
-    }
+    setSelectedMember(null);
   };
 
   const openAddModal = () => {
+    // Only allow managers to open the modal
+    if (!isManager) {
+      alert("Only managers can add or edit meal entries");
+      return;
+    }
+
     setSelectedDay(new Date().getDate());
     setBreakfast(false);
     setLunch(false);
     setDinner(false);
+    setSelectedMember(null);
     setShowModal(true);
   };
 
@@ -232,7 +239,15 @@ export default function MealScreen() {
         <View>
           <Text style={styles.header}>Meal Entry</Text>
           <Text style={styles.subHeader}>{monthKey}</Text>
+
+          {!isManager && (
+            <View style={styles.viewOnlyContainer}>
+              <Eye size={14} color="#6B7280" />
+              <Text style={styles.viewOnlyText}>View Only</Text>
+            </View>
+          )}
         </View>
+
         <View style={styles.totalBadge}>
           <Text style={styles.totalLabel}>Total Meals</Text>
           <Text style={styles.totalValue}>{getGrandTotal()}</Text>
@@ -311,10 +326,12 @@ export default function MealScreen() {
         </ScrollView>
       </ScrollView>
 
-      {/* Floating Add Button */}
-      <TouchableOpacity style={styles.fab} onPress={openAddModal}>
-        <Text style={styles.fabText}>＋</Text>
-      </TouchableOpacity>
+      {/* Floating Add Button - Only visible for managers */}
+      {isManager && (
+        <TouchableOpacity style={styles.fab} onPress={openAddModal}>
+          <Text style={styles.fabText}>＋</Text>
+        </TouchableOpacity>
+      )}
 
       {/* ---------- Add Meal Modal ---------- */}
       <Modal visible={showModal} transparent animationType="slide">
@@ -361,8 +378,7 @@ export default function MealScreen() {
             <Text style={styles.fieldLabel}>Member</Text>
             <TouchableOpacity
               style={styles.memberSelector}
-              onPress={() => isManager && setShowMemberPicker(true)}
-              disabled={!isManager}
+              onPress={() => setShowMemberPicker(true)}
             >
               <Text
                 style={[
@@ -372,7 +388,7 @@ export default function MealScreen() {
               >
                 {selectedMember ? selectedMember.name : "Select Member"}
               </Text>
-              {isManager && <Text style={styles.chevron}>▼</Text>}
+              <Text style={styles.chevron}>▼</Text>
             </TouchableOpacity>
 
             {/* Meal Type Switches */}
@@ -495,6 +511,13 @@ const styles = StyleSheet.create({
   subHeader: {
     fontSize: 14,
     color: "#94A3B8",
+    marginBottom: 4,
+  },
+  viewOnlyBadge: {
+    fontSize: 12,
+    color: "#F59E0B",
+    fontWeight: "600",
+    marginTop: 4,
   },
 
   totalBadge: {
@@ -831,5 +854,17 @@ const styles = StyleSheet.create({
     color: "#FFF",
     fontWeight: "700",
     fontSize: 16,
+  },
+  viewOnlyContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 4,
+  },
+
+  viewOnlyText: {
+    fontSize: 12,
+    color: "#6B7280",
+    fontWeight: "500",
   },
 });

@@ -1,4 +1,6 @@
 import { useRouter } from "expo-router";
+
+import * as Clipboard from "expo-clipboard";
 import {
   collection,
   doc,
@@ -7,12 +9,33 @@ import {
   onSnapshot,
   writeBatch,
 } from "firebase/firestore";
+import {
+  Calendar,
+  Clock,
+  Copy,
+  Crown,
+  LogOut,
+  Mail,
+  Receipt,
+  Settings,
+  Share2,
+  Shield,
+  ShoppingCart,
+  Trash2,
+  User,
+  UserPlus,
+  Users,
+  UsersRound,
+  UtensilsCrossed,
+  Wallet,
+  X,
+} from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
+
 import {
   ActivityIndicator,
   Alert,
   Animated,
-  Clipboard,
   Modal,
   RefreshControl,
   ScrollView,
@@ -20,18 +43,10 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  View
+  View,
 } from "react-native";
 import LogoutModal from "../../components/LogoutModal";
 import { auth, db } from "../../firebase/firebaseConfig";
-
-// SVG Icon Components as Image sources
-const ICONS = {
-  settings: require("../../assets/images/settings.svg"),
-  share: require("../../assets/images/share.svg"),
-  leave: require("../../assets/images/leave_mess.svg"),
-  delete: require("../../assets/images/delete.svg"),
-};
 
 export default function Dashboard() {
   const router = useRouter();
@@ -50,6 +65,7 @@ export default function Dashboard() {
   const [messName, setMessName] = useState("");
   const [messId, setMessId] = useState("");
   const [messCreatedDate, setMessCreatedDate] = useState("");
+
   const [houseStats, setHouseStats] = useState({
     currentMonth: "January, 2026",
     totalMeal: 0.0,
@@ -466,33 +482,21 @@ export default function Dashboard() {
   );
 
   const handleLogout = async () => {
-    Alert.alert("Logout", "Are you sure you want to logout?", [
-      {
-        text: "Cancel",
-        style: "cancel",
-      },
-      {
-        text: "Logout",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            const { signOut } = await import("firebase/auth");
-            const AsyncStorage =
-              await import("@react-native-async-storage/async-storage");
+    try {
+      const { signOut } = await import("firebase/auth");
+      const AsyncStorage =
+        await import("@react-native-async-storage/async-storage");
 
-            await signOut(auth);
-            await AsyncStorage.default.multiRemove([
-              "@firebase_user_id",
-              "@firebase_user_email",
-              "@firebase_auth_token",
-            ]);
-            router.replace("/auth/login");
-          } catch (error) {
-            Alert.alert("Error", "Failed to logout");
-          }
-        },
-      },
-    ]);
+      await signOut(auth);
+      await AsyncStorage.default.multiRemove([
+        "@firebase_user_id",
+        "@firebase_user_email",
+        "@firebase_auth_token",
+      ]);
+      router.replace("/auth/login");
+    } catch (error) {
+      Alert.alert("Error", "Failed to logout");
+    }
   };
 
   const handleExitMess = async () => {
@@ -787,12 +791,12 @@ export default function Dashboard() {
               onPress={() => setShowNotifications(true)}
             >
               <Text style={styles.headerButtonText}>🔔</Text>
-              <View style={styles.notificationBadge} />
             </TouchableOpacity>
           </View>
         </View>
       </Animated.View>
 
+      {/* Profile Modal */}
       {/* Profile Modal */}
       <Modal
         visible={showProfile}
@@ -807,52 +811,143 @@ export default function Dashboard() {
             onPress={() => setShowProfile(false)}
           />
           <View style={styles.modalContainer}>
+            {/* Header with Avatar and Close Button */}
+            <View style={styles.modalHeader}>
+              <View style={styles.avatarContainer}>
+                <View style={styles.avatar}>
+                  <User size={40} color="#FFFFFF" strokeWidth={2.5} />
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={() => setShowProfile(false)}
+              >
+                <X size={24} color="#94A3B8" strokeWidth={2} />
+              </TouchableOpacity>
+            </View>
+
             <Text style={styles.modalTitle}>My Profile</Text>
+            <Text style={styles.modalSubtitle}>Account Information</Text>
 
-            <View style={styles.profileSection}>
-              <Text style={styles.profileLabel}>Name</Text>
-              <Text style={styles.profileValue}>{user.name}</Text>
+            {/* Profile Information */}
+            <View style={styles.profileContent}>
+              {/* Name */}
+              <View style={styles.profileSection}>
+                <View style={styles.profileIconContainer}>
+                  <User size={20} color="#6366F1" strokeWidth={2} />
+                </View>
+                <View style={styles.profileInfo}>
+                  <Text style={styles.profileLabel}>Name</Text>
+                  <Text style={styles.profileValue}>{user.name}</Text>
+                </View>
+              </View>
+
+              {/* Email */}
+              <View style={styles.profileSection}>
+                <View style={styles.profileIconContainer}>
+                  <Mail size={20} color="#6366F1" strokeWidth={2} />
+                </View>
+                <View style={styles.profileInfo}>
+                  <Text style={styles.profileLabel}>Email</Text>
+                  <Text style={styles.profileValue}>{user.email}</Text>
+                </View>
+              </View>
+
+              {/* Role */}
+              <View style={styles.profileSection}>
+                <View style={styles.profileIconContainer}>
+                  <Shield size={20} color="#6366F1" strokeWidth={2} />
+                </View>
+                <View style={styles.profileInfo}>
+                  <Text style={styles.profileLabel}>Role</Text>
+                  <View style={styles.roleBadge}>
+                    {user.role === "manager" ? (
+                      <View style={styles.roleBadgeContent}>
+                        <Crown size={14} color="#FACC15" strokeWidth={2} />
+                        <Text style={styles.roleBadgeText}>Manager</Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.roleBadgeText}>Member</Text>
+                    )}
+                  </View>
+                </View>
+              </View>
+
+              {/* Joined Date */}
+              <View style={styles.profileSection}>
+                <View style={styles.profileIconContainer}>
+                  <Calendar size={20} color="#6366F1" strokeWidth={2} />
+                </View>
+                <View style={styles.profileInfo}>
+                  <Text style={styles.profileLabel}>Joined Date</Text>
+                  <Text style={styles.profileValue}>
+                    {formatDate(user.joinedDate)}
+                  </Text>
+                </View>
+              </View>
+
+              {/* User ID with Copy Button */}
+              <View style={styles.profileSection}>
+                <View style={styles.profileIconContainer}>
+                  <Copy size={20} color="#6366F1" strokeWidth={2} />
+                </View>
+                <View style={styles.profileInfo}>
+                  <Text style={styles.profileLabel}>User ID</Text>
+                  <Text style={styles.profileValueSmall} numberOfLines={1}>
+                    {user.uid}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.copyButton}
+                  activeOpacity={0.7}
+                  onPress={async () => {
+                    try {
+                      await Clipboard.setStringAsync(user.uid);
+                      Alert.alert("Copied!", "User ID copied to clipboard");
+                    } catch (error) {
+                      console.error("Clipboard error:", error);
+                      Alert.alert("Error", "Failed to copy User ID");
+                    }
+                  }}
+                >
+                  <Copy size={16} color="#6366F1" strokeWidth={2} />
+                </TouchableOpacity>
+              </View>
             </View>
 
-            <View style={styles.profileSection}>
-              <Text style={styles.profileLabel}>Email</Text>
-              <Text style={styles.profileValue}>{user.email}</Text>
-            </View>
-
-            <View style={styles.profileSection}>
-              <Text style={styles.profileLabel}>Joined Date</Text>
-              <Text style={styles.profileValue}>
-                {formatDate(user.joinedDate)}
-              </Text>
-            </View>
-
-            <View style={styles.profileSection}>
-              <Text style={styles.profileLabel}>Role</Text>
-              <Text style={styles.profileValue}>
-                {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
-              </Text>
-            </View>
-
-            <View style={styles.profileSection}>
-              <Text style={styles.profileLabel}>User ID</Text>
-              <Text style={styles.profileValueSmall}>{user.uid}</Text>
-            </View>
-
+            {/* Action Buttons */}
             <View style={styles.modalButtons}>
               <TouchableOpacity
                 style={[styles.modalButton, styles.modalButtonDanger]}
                 onPress={() => {
-                  setShowProfile(false);
-                  setTimeout(handleLogout, 300);
+                  Alert.alert(
+                    "Logout",
+                    "Are you sure you want to logout?",
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Logout",
+                        style: "destructive",
+                        onPress: () => {
+                          setShowProfile(false);
+                          setTimeout(handleLogout, 300); // slight delay for modal to close
+                        },
+                      },
+                    ],
+                    { cancelable: true },
+                  );
                 }}
               >
+                <LogOut size={18} color="#FFFFFF" strokeWidth={2} />
                 <Text style={styles.modalButtonText}>Logout</Text>
               </TouchableOpacity>
+
               <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonPrimary]}
+                style={[styles.modalButton, styles.modalButtonSecondary]}
                 onPress={() => setShowProfile(false)}
               >
-                <Text style={styles.modalButtonText}>Close</Text>
+                <X size={18} color="#94A3B8" strokeWidth={2} />
+                <Text style={styles.modalButtonTextSecondary}>Close</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -867,35 +962,43 @@ export default function Dashboard() {
         onRequestClose={() => setShowNotifications(false)}
       >
         <View style={styles.modalOverlay}>
+          {/* Backdrop to close modal when tapped */}
           <TouchableOpacity
             style={styles.modalBackdrop}
             activeOpacity={1}
             onPress={() => setShowNotifications(false)}
           />
+
+          {/* Modal content */}
           <View style={[styles.modalContainer, styles.notificationsModal]}>
+            {/* Header */}
             <View style={styles.notificationsHeader}>
               <Text style={styles.modalTitle}>Notifications</Text>
             </View>
 
+            {/* Notifications list */}
             <ScrollView style={styles.notificationsList}>
-              {notifications.map((notif) => (
-                <View key={notif.id} style={styles.notificationItem}>
-                  <Text style={styles.notificationMessage}>
-                    {notif.message}
-                  </Text>
-                  <Text style={styles.notificationTime}>{notif.timestamp}</Text>
-                </View>
-              ))}
+              {notifications
+                .slice(-4) // get last 4 notifications
+                .reverse() // show newest first
+                .map((notif) => (
+                  <View key={notif.id} style={styles.notificationItem}>
+                    <Text style={styles.notificationMessage}>
+                      {notif.message}
+                    </Text>
+                    <Text style={styles.notificationTime}>
+                      {notif.timestamp}
+                    </Text>
+                  </View>
+                ))}
             </ScrollView>
 
+            {/* View More button */}
             <TouchableOpacity
               style={styles.viewMoreButton}
               onPress={() => {
                 setShowNotifications(false);
-                Alert.alert(
-                  "Coming Soon",
-                  "View more notifications feature coming soon!",
-                );
+                router.push("/mess/notifications");
               }}
             >
               <Text style={styles.viewMoreButtonText}>
@@ -914,23 +1017,28 @@ export default function Dashboard() {
         onRequestClose={() => setShowSettings(false)}
       >
         <View style={styles.modalOverlay}>
+          {/* Backdrop */}
           <TouchableOpacity
             style={styles.modalBackdrop}
             activeOpacity={1}
             onPress={() => setShowSettings(false)}
           />
+
           <View style={[styles.modalContainer, styles.settingsModal]}>
+            {/* Header */}
             <View style={styles.settingsHeader}>
               <Text style={styles.modalTitle}>Mess Settings</Text>
             </View>
 
+            {/* Menu Items */}
             <View style={styles.settingsMenuItems}>
+              {/* Meal Routine */}
               <TouchableOpacity
                 style={styles.settingsMenuItem}
                 onPress={handleMealRoutine}
               >
                 <View style={styles.settingsMenuIcon}>
-                  <Text style={styles.settingsMenuIconText}>🕐</Text>
+                  <Clock size={20} color="#000" />
                 </View>
                 <View style={styles.settingsMenuTextContainer}>
                   <Text style={styles.settingsMenuText}>Meal Routine</Text>
@@ -940,12 +1048,13 @@ export default function Dashboard() {
                 </View>
               </TouchableOpacity>
 
+              {/* Share Mess */}
               <TouchableOpacity
                 style={styles.settingsMenuItem}
                 onPress={handleShareMess}
               >
                 <View style={styles.settingsMenuIcon}>
-                  <Text style={styles.settingsMenuIconText}>📤</Text>
+                  <Share2 size={20} color="#000" />
                 </View>
                 <View style={styles.settingsMenuTextContainer}>
                   <Text style={styles.settingsMenuText}>Share Mess</Text>
@@ -955,6 +1064,7 @@ export default function Dashboard() {
                 </View>
               </TouchableOpacity>
 
+              {/* Leave Mess */}
               <TouchableOpacity
                 style={styles.settingsMenuItem}
                 onPress={() => {
@@ -968,7 +1078,7 @@ export default function Dashboard() {
                     styles.settingsMenuIconWarning,
                   ]}
                 >
-                  <Text style={styles.settingsMenuIconText}>🚪</Text>
+                  <LogOut size={20} color="#000" />
                 </View>
                 <View style={styles.settingsMenuTextContainer}>
                   <Text style={styles.settingsMenuText}>Leave Mess</Text>
@@ -976,6 +1086,7 @@ export default function Dashboard() {
                 </View>
               </TouchableOpacity>
 
+              {/* Delete Mess (Manager Only) */}
               {user?.role === "manager" && (
                 <TouchableOpacity
                   style={styles.settingsMenuItem}
@@ -987,7 +1098,7 @@ export default function Dashboard() {
                       styles.settingsMenuIconDanger,
                     ]}
                   >
-                    <Text style={styles.settingsMenuIconText}>🗑️</Text>
+                    <Trash2 size={20} color="#000" />
                   </View>
                   <View style={styles.settingsMenuTextContainer}>
                     <Text style={styles.settingsMenuText}>Delete Mess</Text>
@@ -1104,7 +1215,7 @@ export default function Dashboard() {
                 style={styles.settingsIconButton}
                 onPress={() => setShowSettings(true)}
               >
-                <Text style={styles.settingsIconText}>⚙️</Text>
+                <Settings size={28} color="#000" />
               </TouchableOpacity>
             </View>
           </View>
@@ -1146,28 +1257,21 @@ export default function Dashboard() {
 
           {/* Stats Cards */}
           <View style={styles.statsContainer}>
-            <TouchableOpacity
-              style={[styles.statCard, styles.statCardBlue]}
-              onPress={() => router.push("/mess/meals")}
-              activeOpacity={0.7}
-            >
+            {/* Total Meals (NO TAP) */}
+            <View style={[styles.statCard, styles.statCardBlue]}>
               <Text style={styles.statLabel}>Total Meals</Text>
               <Text style={styles.statValue}>{houseStats.totalMeal}</Text>
-              <Text style={styles.statHint}>Tap to view</Text>
-            </TouchableOpacity>
+            </View>
 
-            <TouchableOpacity
-              style={[styles.statCard, styles.statCardGreen]}
-              onPress={() => router.push("/mess/expenses")}
-              activeOpacity={0.7}
-            >
+            {/* Total Expenses (NO TAP) */}
+            <View style={[styles.statCard, styles.statCardGreen]}>
               <Text style={styles.statLabel}>Total Expenses</Text>
               <Text style={styles.statValue}>
                 ₹{houseStats.totalBazar.toFixed(2)}
               </Text>
-              <Text style={styles.statHint}>Tap to view</Text>
-            </TouchableOpacity>
+            </View>
 
+            {/* Cost Per Meal */}
             <View style={[styles.statCard, styles.statCardPurple]}>
               <Text style={styles.statLabel}>Cost Per Meal</Text>
               <Text style={styles.statValue}>
@@ -1175,6 +1279,7 @@ export default function Dashboard() {
               </Text>
             </View>
 
+            {/* Remaining Money */}
             <View style={[styles.statCard, styles.statCardAmber]}>
               <Text style={styles.statLabel}>Remaining Money</Text>
               <Text
@@ -1191,36 +1296,55 @@ export default function Dashboard() {
           {/* Member Transaction Buttons (Members Only) */}
           {user.role === "member" && (
             <View style={styles.actionButtonsContainer}>
+              {/* Deposit History */}
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonGreen]}
-                onPress={() => handleViewTransactions("deposit")}
+                onPress={() => router.push("/mess/deposits")} // view only
+                activeOpacity={0.75}
               >
-                <Text style={styles.actionButtonIcon}>💰</Text>
+                <Wallet size={22} color="#fff" />
                 <View style={styles.actionButtonTextContainer}>
                   <Text style={styles.actionButtonLabel}>View</Text>
                   <Text style={styles.actionButtonTitle}>Deposit History</Text>
                 </View>
               </TouchableOpacity>
 
+              {/* Expense History */}
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonRed]}
-                onPress={() => handleViewTransactions("expense")}
+                onPress={() => router.push("/mess/expenses")} // view only
+                activeOpacity={0.75}
               >
-                <Text style={styles.actionButtonIcon}>💸</Text>
+                <Receipt size={22} color="#fff" />
                 <View style={styles.actionButtonTextContainer}>
                   <Text style={styles.actionButtonLabel}>View</Text>
                   <Text style={styles.actionButtonTitle}>Expense History</Text>
                 </View>
               </TouchableOpacity>
 
+              {/* Meal History */}
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonBlue]}
-                onPress={() => handleViewTransactions("meal")}
+                onPress={() => router.push("/mess/meals")} // view only
+                activeOpacity={0.75}
               >
-                <Text style={styles.actionButtonIcon}>🍽️</Text>
+                <UtensilsCrossed size={22} color="#fff" />
                 <View style={styles.actionButtonTextContainer}>
                   <Text style={styles.actionButtonLabel}>View</Text>
-                  <Text style={styles.actionButtonTitle}>Meal Entries</Text>
+                  <Text style={styles.actionButtonTitle}>Meal History</Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Member List */}
+              <TouchableOpacity
+                style={[styles.actionButton, styles.actionButtonPurple]}
+                onPress={() => router.push("/mess/members")} // view only
+                activeOpacity={0.75}
+              >
+                <Users size={22} color="#fff" />
+                <View style={styles.actionButtonTextContainer}>
+                  <Text style={styles.actionButtonLabel}>View</Text>
+                  <Text style={styles.actionButtonTitle}>Member List</Text>
                 </View>
               </TouchableOpacity>
             </View>
@@ -1318,45 +1442,74 @@ export default function Dashboard() {
             activeOpacity={1}
             onPress={() => setShowActionMenu(false)}
           />
+
           <View style={styles.actionMenuContainer}>
+            {/* Add Member */}
             <TouchableOpacity
               style={styles.actionMenuItem}
               onPress={() => handleAction("Add Member")}
             >
               <View style={styles.actionMenuIcon}>
-                <Text style={styles.actionMenuIconText}>👤</Text>
+                <UserPlus size={18} color="#2563EB" />
               </View>
               <Text style={styles.actionMenuText}>Add Member</Text>
             </TouchableOpacity>
 
+            {/* Add Deposit */}
             <TouchableOpacity
               style={styles.actionMenuItem}
               onPress={() => handleAction("Add Deposit")}
             >
               <View style={styles.actionMenuIcon}>
-                <Text style={styles.actionMenuIconText}>💰</Text>
+                <Wallet size={18} color="#16A34A" />
               </View>
               <Text style={styles.actionMenuText}>Add Deposit</Text>
             </TouchableOpacity>
 
+            {/* Add Expense */}
             <TouchableOpacity
               style={styles.actionMenuItem}
               onPress={() => handleAction("Add Expense")}
             >
               <View style={styles.actionMenuIcon}>
-                <Text style={styles.actionMenuIconText}>🛒</Text>
+                <ShoppingCart size={18} color="#DC2626" />
               </View>
               <Text style={styles.actionMenuText}>Add Expense</Text>
             </TouchableOpacity>
 
+            {/* Meal Entry */}
             <TouchableOpacity
               style={styles.actionMenuItem}
               onPress={() => handleAction("Meal Entry")}
             >
               <View style={styles.actionMenuIcon}>
-                <Text style={styles.actionMenuIconText}>🍽️</Text>
+                <UtensilsCrossed size={18} color="#2563EB" />
               </View>
               <Text style={styles.actionMenuText}>Meal Entry</Text>
+            </TouchableOpacity>
+
+            {/* Add Guest Meal – Coming Soon */}
+            <TouchableOpacity
+              style={styles.actionMenuItem}
+              activeOpacity={0.7}
+              onPress={() =>
+                Alert.alert(
+                  "Coming Soon",
+                  "Guest meal feature is under development and will be available soon.",
+                )
+              }
+            >
+              <View style={styles.actionMenuIcon}>
+                <UsersRound size={18} color="#9CA3AF" />
+              </View>
+
+              <View style={{ flex: 1 }}>
+                <Text style={styles.actionMenuText}>Add Guest Meal</Text>
+                <View style={styles.comingSoonBadge}>
+                  <Clock size={10} color="#9CA3AF" />
+                  <Text style={styles.comingSoonText}>Coming Soon</Text>
+                </View>
+              </View>
             </TouchableOpacity>
           </View>
         </View>
@@ -1478,12 +1631,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     marginTop: 4,
   },
-  roleBadge: {
-    backgroundColor: "rgba(255, 255, 255, 0.25)",
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
+
   roleText: {
     fontSize: 12,
     fontWeight: "700",
@@ -1564,10 +1712,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(99, 102, 241, 0.2)",
     justifyContent: "center",
     alignItems: "center",
-  },
-  settingsIconText: {
-    fontSize: 22,
-    color: "#FFFFFF",
   },
   monthSelector: {
     flexDirection: "row",
@@ -1851,79 +1995,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "700",
   },
-  modalOverlay: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.7)",
-  },
-  modalBackdrop: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-  },
-  modalContainer: {
-    backgroundColor: "rgba(30, 41, 59, 0.98)",
-    borderRadius: 20,
-    padding: 20,
-    width: "85%",
-    maxWidth: 400,
-    borderWidth: 1,
-    borderColor: "rgba(99, 102, 241, 0.3)",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.4,
-    shadowRadius: 16,
-    elevation: 16,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: "#FFFFFF",
-    marginBottom: 16,
-    textAlign: "center",
-  },
-  profileSection: {
-    marginBottom: 12,
-  },
-  profileLabel: {
-    fontSize: 12,
-    color: "#94A3B8",
-    marginBottom: 4,
-  },
-  profileValue: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#FFFFFF",
-  },
-  profileValueSmall: {
-    fontSize: 11,
-    color: "#CBD5E1",
-  },
-  modalButtons: {
-    flexDirection: "row",
-    gap: 12,
-    marginTop: 20,
-  },
-  modalButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: "center",
-  },
+
   modalButtonPrimary: {
     backgroundColor: "#6366F1",
   },
-  modalButtonDanger: {
-    backgroundColor: "#EF4444",
-  },
-  modalButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: 14,
-  },
+
   notificationsModal: {
     maxHeight: "70%",
   },
@@ -1993,10 +2069,10 @@ const styles = StyleSheet.create({
   settingsMenuIcon: {
     width: 40,
     height: 40,
-    borderRadius: 20,
-    backgroundColor: "#6366F1",
     justifyContent: "center",
     alignItems: "center",
+    backgroundColor: "#E0E0E0",
+    borderRadius: 10,
     marginRight: 16,
   },
   settingsMenuIconDanger: {
@@ -2051,11 +2127,210 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginBottom: 20,
   },
-  modalButtonSecondary: {
-    backgroundColor: "#64748B",
-  },
+
   modalButtonDisabled: {
     backgroundColor: "#475569",
     opacity: 0.5,
+  },
+  actionButtonPurple: {
+    backgroundColor: "#6D28D9", // violet / indigo tone
+  },
+  actionMenuItemDisabled: {
+    opacity: 0.6,
+  },
+
+  disabledText: {
+    color: "#9CA3AF",
+  },
+
+  comingSoonBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginTop: 2,
+  },
+
+  comingSoonText: {
+    fontSize: 10,
+    fontWeight: "500",
+    color: "#9CA3AF",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.75)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalBackdrop: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  modalContainer: {
+    backgroundColor: "#1E293B",
+    borderRadius: 24,
+    padding: 24,
+    width: "90%",
+    maxWidth: 400,
+    borderWidth: 1,
+    borderColor: "#334155",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  modalHeader: {
+    alignItems: "center",
+    marginBottom: 16,
+    position: "relative",
+  },
+  avatarContainer: {
+    marginBottom: 8,
+  },
+  avatar: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: "#6366F1",
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 3,
+    borderColor: "#818CF8",
+  },
+  closeButton: {
+    position: "absolute",
+    top: -8,
+    right: -8,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#0F172A",
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#334155",
+  },
+  modalTitle: {
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#FFFFFF",
+    textAlign: "center",
+    marginBottom: 4,
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: "#94A3B8",
+    textAlign: "center",
+    marginBottom: 24,
+  },
+  profileContent: {
+    gap: 12,
+    marginBottom: 24,
+  },
+  profileSection: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#0F172A",
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#334155",
+  },
+  profileIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(99, 102, 241, 0.15)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  profileInfo: {
+    flex: 1,
+  },
+  profileLabel: {
+    fontSize: 11,
+    color: "#64748B",
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  profileValue: {
+    fontSize: 15,
+    color: "#FFFFFF",
+    fontWeight: "600",
+  },
+  profileValueSmall: {
+    fontSize: 12,
+    color: "#94A3B8",
+    fontWeight: "500",
+    fontFamily: "monospace",
+  },
+
+  roleBadgeManager: {
+    backgroundColor: "#F59E0B",
+  },
+  roleBadgeMember: {
+    backgroundColor: "#6366F1",
+  },
+
+  copyButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: "rgba(99, 102, 241, 0.15)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginLeft: 8,
+  },
+  modalButtons: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  modalButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  modalButtonDanger: {
+    backgroundColor: "#EF4444",
+  },
+  modalButtonSecondary: {
+    backgroundColor: "#334155",
+  },
+  modalButtonText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  modalButtonTextSecondary: {
+    color: "#94A3B8",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  roleBadge: {
+    backgroundColor: "#F59E0B20", // slightly transparent background
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    alignSelf: "flex-start",
+  },
+  roleBadgeContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  roleBadgeText: {
+    color: "#FFF",
+    fontSize: 11,
+    fontWeight: "700",
   },
 });
