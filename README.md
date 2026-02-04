@@ -16,14 +16,7 @@ This app helps manage meals, expenses, members, and notifications for a mess/hos
 
 ---
 
-## Screenshots
 
-<!-- Add screenshots here -->
-
-![App Icon](./assets/images/icon.png)
-![Splash Screen](./assets/images/splash-icon.png)
-
----
 
 ## Installation
 

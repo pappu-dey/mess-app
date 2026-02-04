@@ -103,7 +103,66 @@ export default function Deposits() {
 
   // Fetch deposits from Firebase
   useEffect(() => {
+<<<<<<< HEAD
     if (!messId) {
+=======
+    if (!authLoading && messId) init();
+  }, [authLoading, messId]);
+
+  const init = async () => {
+    await Promise.all([fetchMembers(), fetchDeposits()]);
+  };
+
+  // ---------- Fetch Members ----------
+  const fetchMembers = async () => {
+    if (!messId) return;
+    try {
+      // Fetch all users who have this messId
+      const q = query(collection(db, "users"), where("messId", "==", messId));
+      const snap = await getDocs(q);
+      const membersList = snap.docs.map((d) => ({
+        id: d.id,
+        name: d.data().name,
+        email: d.data().email,
+        role: d.data().role,
+      }));
+      setMembers(membersList.sort((a, b) => a.name.localeCompare(b.name)));
+    } catch (error) {
+      console.error("Error fetching members:", error);
+      Alert.alert("Error", "Failed to load members");
+    }
+  };
+
+  // ---------- Fetch Deposits ----------
+  const fetchDeposits = async () => {
+    if (!messId) return;
+    setLoading(true);
+    try {
+      const monthRef = doc(db, "messes", messId, "managerMoney", monthKey);
+      const entriesRef = collection(monthRef, "entries");
+
+      const q = query(
+        entriesRef,
+        where("type", "==", "deposit"),
+        orderBy("createdAt", "desc"),
+      );
+      const snap = await getDocs(q);
+
+      setDeposits(
+        snap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<Deposit, "id">),
+        })),
+      );
+
+      const monthSnap = await getDoc(monthRef);
+      setMonthlyTotal(
+        monthSnap.exists() ? monthSnap.data().totalDeposit || 0 : 0,
+      );
+    } catch (error) {
+      console.error(error);
+    } finally {
+>>>>>>> 7ec4034b528c084bb08df0793d38d78250b7187c
       setLoading(false);
       return;
     }

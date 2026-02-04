@@ -259,12 +259,14 @@ export default function CreateMess() {
       const memberRef = doc(db, "messes", newMessId, "members", user.uid);
       await setDoc(memberRef, {
         name: userName,
-        email: user.email,
+        email: user.email || "",
         role: "manager",
         joinedAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
       });
 
       // Update user document with mess info
+      const userRef = doc(db, "users", user.uid);
       await setDoc(
         userDocRef,
         {
@@ -274,6 +276,8 @@ export default function CreateMess() {
         },
         { merge: true }
       );
+
+
 
       setGeneratedMessId(newMessId);
       setShowSuccessModal(true);
