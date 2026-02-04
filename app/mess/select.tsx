@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Lightbulb,
   LogOut,
+  Mail,
   Sparkles,
   Users
 } from "lucide-react-native";
@@ -13,6 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Animated,
+  Linking,
   Modal,
   StyleSheet,
   Text,
@@ -123,6 +125,46 @@ export default function MessSelect() {
     }
   };
 
+  const handleContactSupport = async () => {
+    const email = "xtpdev@gmail.com";
+    const subject = "Mess Manager Support Request";
+    const body = `Hi,
+
+I need help with Mess Manager.
+
+User: ${user?.name || "N/A"}
+Email: ${user?.email || "N/A"}
+
+Issue Description:
+`;
+
+    const mailtoUrl = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+    try {
+      const canOpen = await Linking.canOpenURL(mailtoUrl);
+      if (canOpen) {
+        await Linking.openURL(mailtoUrl);
+      } else {
+        Alert.alert(
+          "Contact Support",
+          `Please email us at: ${email}`,
+          [
+            {
+              text: "Copy Email",
+              onPress: () => {
+                // Note: Clipboard would need to be imported from @react-native-clipboard/clipboard
+                Alert.alert("Email", email);
+              },
+            },
+            { text: "OK" },
+          ]
+        );
+      }
+    } catch (error) {
+      Alert.alert("Error", "Could not open email client");
+    }
+  };
+
   const handleJoinPress = () => {
     router.push("/mess/join");
   };
@@ -190,6 +232,20 @@ export default function MessSelect() {
                 <Text style={styles.menuUserEmail}>{userEmail}</Text>
               </View>
             </View>
+
+            <View style={styles.menuDivider} />
+
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                setShowProfileMenu(false);
+                handleContactSupport();
+              }}
+              activeOpacity={0.7}
+            >
+              <Mail size={22} color="#3B82F6" strokeWidth={2.5} />
+              <Text style={styles.menuItemTextSupport}>Contact Support</Text>
+            </TouchableOpacity>
 
             <View style={styles.menuDivider} />
 
@@ -474,6 +530,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "700",
     color: "#EF4444",
+    letterSpacing: -0.2,
+  },
+  menuItemTextSupport: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#3B82F6",
     letterSpacing: -0.2,
   },
   content: {

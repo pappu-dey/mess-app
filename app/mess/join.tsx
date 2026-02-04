@@ -1,649 +1,712 @@
-// app/mess/join.tsx
+// app/mess/join.tsx - Redesigned to Match Create Mess Theme
 import { useRouter } from "expo-router";
-import { arrayUnion, doc, getDoc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
+import {
+  arrayUnion,
+  doc,
+  getDoc,
+  increment,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+} from "firebase/firestore";
 import { useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
+  Alert,
   Animated,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   TouchableWithoutFeedback,
-  View
+  View,
 } from "react-native";
 import { auth, db } from "../../firebase/firebaseConfig";
 
+// ==================== CONSTANTS ====================
+const MIN_MESS_ID_LENGTH = 6;
+const MAX_MESS_ID_LENGTH = 20;
+const ERROR_DISPLAY_DURATION = 3500;
+
+// ==================== TYPES ====================
+type MessData = {
+  name: string;
+  createdAt: any;
+  memberCount: number;
+  members: string[];
+};
+
+type UserData = {
+  name?: string;
+  email?: string;
+  messId?: string;
+  role?: string;
+};
+
+// ==================== MAIN COMPONENT ====================
 export default function JoinMess() {
   const router = useRouter();
+
+  // State
   const [messId, setMessId] = useState("");
   const [focusedInput, setFocusedInput] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
 
-  // Animation values
+  // Animation refs
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(50)).current;
-  const scaleAnim = useRef(new Animated.Value(0.9)).current;
-  const buttonScale = useRef(new Animated.Value(1)).current;
+  const slideAnim = useRef(new Animated.Value(40)).current;
+  const scaleAnim = useRef(new Animated.Value(0.95)).current;
   const shakeAnim = useRef(new Animated.Value(0)).current;
-  const backButtonScale = useRef(new Animated.Value(1)).current;
-  const errorFadeAnim = useRef(new Animated.Value(0)).current;
-  const errorSlideAnim = useRef(new Animated.Value(-10)).current;
+  const buttonScale = useRef(new Animated.Value(1)).current;
+  const errorFade = useRef(new Animated.Value(0)).current;
 
+  // ==================== EFFECTS ====================
+
+  // Initial animations
   useEffect(() => {
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 800,
+        duration: 600,
         useNativeDriver: true,
       }),
       Animated.timing(slideAnim, {
         toValue: 0,
-        duration: 600,
+        duration: 500,
         useNativeDriver: true,
       }),
       Animated.spring(scaleAnim, {
         toValue: 1,
-        tension: 50,
-        friction: 7,
+        friction: 8,
+        tension: 40,
         useNativeDriver: true,
       }),
     ]).start();
+
+    // Keyboard listeners
+    const keyboardDidShowListener = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => setKeyboardVisible(true)
+    );
+    const keyboardDidHideListener = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => setKeyboardVisible(false)
+    );
+
+    return () => {
+      keyboardDidShowListener.remove();
+      keyboardDidHideListener.remove();
+    };
   }, []);
 
-  const shakeAnimation = () => {
+  // ==================== ANIMATION HELPERS ====================
+
+  const shake = () => {
     Animated.sequence([
       Animated.timing(shakeAnim, {
         toValue: 10,
-        duration: 50,
+        duration: 60,
         useNativeDriver: true,
       }),
       Animated.timing(shakeAnim, {
         toValue: -10,
-        duration: 50,
+        duration: 60,
         useNativeDriver: true,
       }),
       Animated.timing(shakeAnim, {
         toValue: 10,
-        duration: 50,
+        duration: 60,
         useNativeDriver: true,
       }),
       Animated.timing(shakeAnim, {
         toValue: 0,
-        duration: 50,
+        duration: 60,
         useNativeDriver: true,
       }),
     ]).start();
   };
 
-  const showError = (message: string) => {
-    setErrorMessage(message);
-    Animated.parallel([
-      Animated.timing(errorFadeAnim, {
-        toValue: 1,
-        duration: 300,
-        useNativeDriver: true,
-      }),
-      Animated.spring(errorSlideAnim, {
-        toValue: 0,
-        tension: 100,
-        friction: 8,
-        useNativeDriver: true,
-      }),
-    ]).start();
-
-    setTimeout(() => {
-      hideError();
-    }, 4000);
-  };
-
-  const hideError = () => {
-    Animated.parallel([
-      Animated.timing(errorFadeAnim, {
-        toValue: 0,
-        duration: 200,
-        useNativeDriver: true,
-      }),
-      Animated.timing(errorSlideAnim, {
-        toValue: -10,
-        duration: 200,
-        useNativeDriver: true,
-      }),
-    ]).start(() => {
-      setErrorMessage("");
-    });
-  };
-
-  const handleBackPress = () => {
-    Animated.sequence([
-      Animated.timing(backButtonScale, {
-        toValue: 0.9,
-        duration: 150,
-        useNativeDriver: true,
-      }),
-      Animated.timing(backButtonScale, {
-        toValue: 1,
-        duration: 150,
-        useNativeDriver: true,
-      }),
-    ]).start(() => {
-      router.back();
-    });
-  };
-
-  const handleJoin = async () => {
-    Keyboard.dismiss();
-    hideError();
-
+  const animateButton = () => {
     Animated.sequence([
       Animated.timing(buttonScale, {
         toValue: 0.95,
-        duration: 100,
+        duration: 80,
         useNativeDriver: true,
       }),
-      Animated.timing(buttonScale, {
+      Animated.spring(buttonScale, {
         toValue: 1,
-        duration: 100,
+        friction: 3,
         useNativeDriver: true,
       }),
     ]).start();
+  };
 
-    const trimmedMessId = messId.trim();
+  const showError = (msg: string) => {
+    setErrorMessage(msg);
+    Animated.timing(errorFade, {
+      toValue: 1,
+      duration: 250,
+      useNativeDriver: true,
+    }).start();
 
-    if (!trimmedMessId) {
-      shakeAnimation();
-      showError("Please enter a Mess ID");
+    setTimeout(() => {
+      Animated.timing(errorFade, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }).start(() => setErrorMessage(""));
+    }, ERROR_DISPLAY_DURATION);
+  };
+
+  // ==================== VALIDATION ====================
+
+  const validateMessId = (id: string): { valid: boolean; error?: string } => {
+    const trimmedId = id.trim();
+
+    if (!trimmedId) {
+      return { valid: false, error: "Please enter a Mess ID" };
+    }
+
+    if (trimmedId.length < MIN_MESS_ID_LENGTH) {
+      return {
+        valid: false,
+        error: `Mess ID must be at least ${MIN_MESS_ID_LENGTH} characters`,
+      };
+    }
+
+    if (trimmedId.length > MAX_MESS_ID_LENGTH) {
+      return {
+        valid: false,
+        error: `Mess ID cannot exceed ${MAX_MESS_ID_LENGTH} characters`,
+      };
+    }
+
+    // Check for valid characters (alphanumeric and hyphens)
+    const validPattern = /^[A-Z0-9-]+$/;
+    if (!validPattern.test(trimmedId)) {
+      return {
+        valid: false,
+        error: "Mess ID can only contain letters, numbers, and hyphens",
+      };
+    }
+
+    return { valid: true };
+  };
+
+  // ==================== MAIN JOIN HANDLER ====================
+
+  const handleJoin = async () => {
+    if (isLoading) return;
+
+    Keyboard.dismiss();
+    setErrorMessage("");
+    animateButton();
+
+    // Validate Mess ID
+    const messCode = messId.trim().toUpperCase();
+    const validation = validateMessId(messCode);
+
+    if (!validation.valid) {
+      shake();
+      showError(validation.error!);
       return;
     }
 
-    if (trimmedMessId.length < 6) {
-      shakeAnimation();
-      showError("Mess ID must be at least 6 characters");
+    // Check authentication
+    const user = auth.currentUser;
+    if (!user) {
+      shake();
+      showError("You must be logged in to join a mess");
+      setTimeout(() => {
+        router.replace("/auth/login");
+      }, 2000);
       return;
     }
 
     setIsLoading(true);
 
     try {
-      const user = auth.currentUser;
-      if (!user) {
-        shakeAnimation();
-        showError("You must be logged in to join a mess");
-        setIsLoading(false);
-        return;
-      }
+      // 1. Check if mess exists
+      const messRef = doc(db, "messes", messCode);
+      const messSnap = await getDoc(messRef);
 
-      // Convert to uppercase for consistency
-      const messIdUpper = trimmedMessId.toUpperCase();
-
-      // Check if mess exists
-      const messRef = doc(db, "messes", messIdUpper);
-      const messDoc = await getDoc(messRef);
-
-      if (!messDoc.exists()) {
-        shakeAnimation();
+      if (!messSnap.exists()) {
+        shake();
         showError("Invalid Mess ID. Please check and try again.");
         setIsLoading(false);
         return;
       }
 
-      const messData = messDoc.data();
+      const messData = messSnap.data() as MessData;
 
-      // Check if user is already a member
-      if (messData.members && messData.members.includes(user.uid)) {
-        // User is already a member, just update their user doc and redirect
-        const userRef = doc(db, "users", user.uid);
+      // 2. Check if already a member via subcollection
+      const memberRef = doc(db, "messes", messCode, "members", user.uid);
+      const memberSnap = await getDoc(memberRef);
+
+      if (memberSnap.exists()) {
+        // User is already a member - just update their user doc
         await setDoc(
-          userRef,
+          doc(db, "users", user.uid),
           {
-            messId: messIdUpper,
-            role: "member",
+            messId: messCode,
+            role: memberSnap.data()?.role || "member",
             updatedAt: serverTimestamp(),
           },
           { merge: true }
         );
-        router.replace("/mess/dashboard");
+
+        showError(`Welcome back to ${messData.name || "your mess"}!`);
+        setTimeout(() => {
+          setIsLoading(false);
+          router.replace("/mess/dashboard");
+        }, 1000);
         return;
       }
 
-      // Fetch user data for name
-      const userRef = doc(db, "users", user.uid);
-      const userDoc = await getDoc(userRef);
-      const userData = userDoc.exists() ? userDoc.data() : {};
-      const userName = userData.name || user.displayName || "Member";
+      // 3. Get user information
+      const userSnap = await getDoc(doc(db, "users", user.uid));
+      const userData = userSnap.exists() ? (userSnap.data() as UserData) : {};
+      const userName = userData?.name || user.displayName || user.email?.split("@")[0] || "Member";
 
-      // Add user to mess members array
-      await updateDoc(messRef, {
-        members: arrayUnion(user.uid),
-        memberCount: (messData.memberCount || 0) + 1,
-      });
+      // 4. Check if user is already in another mess
+      if (userData?.messId && userData.messId !== messCode) {
+        Alert.alert(
+          "Already in a Mess",
+          `You are currently a member of another mess. Would you like to leave it and join ${messData.name || "this mess"}?`,
+          [
+            {
+              text: "Cancel",
+              style: "cancel",
+              onPress: () => setIsLoading(false),
+            },
+            {
+              text: "Switch Mess",
+              style: "destructive",
+              onPress: () => proceedWithJoin(messCode, messRef, memberRef, userName),
+            },
+          ]
+        );
+        return;
+      }
 
-      // Add user to members subcollection
-      const memberRef = doc(db, "messes", messIdUpper, "members", user.uid);
+      // 5. Proceed with joining
+      await proceedWithJoin(messCode, messRef, memberRef, userName);
+    } catch (err: any) {
+      console.error("Join mess error:", err);
+      shake();
+
+      let errorMsg = "Failed to join mess. Please try again.";
+
+      // Handle specific error cases
+      if (err.code === "permission-denied") {
+        errorMsg = "You don't have permission to join this mess";
+      } else if (err.code === "unavailable") {
+        errorMsg = "Network error. Please check your connection";
+      } else if (err.code === "not-found") {
+        errorMsg = "Mess not found. Please verify the ID";
+      }
+
+      showError(errorMsg);
+      setIsLoading(false);
+    }
+  };
+
+  // ==================== JOIN PROCESS ====================
+
+  const proceedWithJoin = async (
+    messCode: string,
+    messRef: any,
+    memberRef: any,
+    userName: string
+  ) => {
+    try {
+      const user = auth.currentUser;
+      if (!user) throw new Error("User not authenticated");
+
+      // 1. Create member document in subcollection
       await setDoc(memberRef, {
+        uid: user.uid,
         name: userName,
-        email: user.email,
+        email: user.email || "",
         role: "member",
         joinedAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+        isActive: true,
       });
 
-      // Update user document with mess info
-<<<<<<< HEAD
-=======
-      const userRef = doc(db, "users", user.uid);
-      const userDoc = await getDoc(userRef);
-      const userData = userDoc.data();
-      
->>>>>>> 7ec4034b528c084bb08df0793d38d78250b7187c
+      // 2. Update mess document (atomic operations)
+      await updateDoc(messRef, {
+        members: arrayUnion(user.uid),
+        memberCount: increment(1),
+        updatedAt: serverTimestamp(),
+      });
+
+      // 3. Update user document
       await setDoc(
-        userRef,
+        doc(db, "users", user.uid),
         {
-          messId: messIdUpper,
+          messId: messCode,
           role: "member",
           updatedAt: serverTimestamp(),
         },
         { merge: true }
       );
 
-      // Create member document in mess subcollection for statistics
-      const memberRef = doc(db, "messes", messIdUpper, "members", user.uid);
-      await setDoc(memberRef, {
-        name: userData?.name || user.displayName || "Member",
-        email: userData?.email || user.email || "",
-        role: "member",
-        joinedAt: serverTimestamp(),
-        createdAt: serverTimestamp(),
-      }, { merge: true });
-
-      // Success - redirect to dashboard
-      router.replace("/mess/dashboard");
-    } catch (error: any) {
-      console.error("Error joining mess:", error);
-      shakeAnimation();
-      showError(error.message || "Failed to join mess. Please try again.");
-    } finally {
+      // Success - navigate to dashboard
       setIsLoading(false);
+      router.replace("/mess/dashboard");
+    } catch (err: any) {
+      console.error("Error in proceedWithJoin:", err);
+      throw err; // Re-throw to be caught by parent handler
     }
   };
 
+  // ==================== RENDER ====================
+
   return (
-    <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.container}
-        keyboardVerticalOffset={0}
-      >
-        <View style={styles.gradientBackground}>
-          <View style={styles.circle1} />
-          <View style={styles.circle2} />
-          <View style={styles.circle3} />
-        </View>
-
-        <Animated.View
-          style={[
-            styles.content,
-            {
-              opacity: fadeAnim,
-              transform: [
-                { translateY: slideAnim },
-                { scale: scaleAnim },
-                { translateX: shakeAnim },
-              ],
-            },
-          ]}
-        >
-          <Animated.View
-            style={[
-              styles.backButton,
-              { transform: [{ scale: backButtonScale }] },
-            ]}
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      style={styles.container}
+      keyboardVerticalOffset={0}
+    >
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        <View style={styles.container}>
+          {/* Back Button */}
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => router.back()}
+            activeOpacity={0.7}
           >
-            <TouchableOpacity
-              onPress={handleBackPress}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.backButtonText}>← Back</Text>
-            </TouchableOpacity>
-          </Animated.View>
+            <Text style={styles.backButtonText}>← Back</Text>
+          </TouchableOpacity>
 
-          <View style={styles.header}>
-            <View style={styles.iconContainer}>
-              <Text style={styles.iconEmoji}>👥</Text>
-            </View>
-            <Text style={styles.title}>Join a Mess</Text>
-            <Text style={styles.subtitle}>
-              Enter the Mess ID shared by your group admin
-            </Text>
-          </View>
-
-          <View style={styles.form}>
-            {errorMessage ? (
-              <Animated.View
-                style={[
-                  styles.errorContainer,
-                  {
-                    opacity: errorFadeAnim,
-                    transform: [{ translateY: errorSlideAnim }],
-                  },
-                ]}
-              >
-                <View style={styles.errorContent}>
-                  <Text style={styles.errorIcon}>⚠️</Text>
-                  <Text style={styles.errorText}>{errorMessage}</Text>
-                  <TouchableOpacity
-                    onPress={hideError}
-                    style={styles.errorClose}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  >
-                    <Text style={styles.errorCloseText}>✕</Text>
-                  </TouchableOpacity>
-                </View>
-              </Animated.View>
-            ) : null}
-
-            <View
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <Animated.View
               style={[
-                styles.inputContainer,
-                focusedInput && styles.inputFocused,
-                errorMessage && styles.inputError,
+                styles.content,
+                {
+                  opacity: fadeAnim,
+                  transform: [
+                    { translateY: slideAnim },
+                    { scale: scaleAnim },
+                    { translateX: shakeAnim },
+                  ],
+                },
               ]}
             >
-              <Text style={styles.inputLabel}>MESS ID</Text>
-              <TextInput
-                placeholder="Enter 6-digit Mess ID"
-                placeholderTextColor="#64748B"
-                style={styles.input}
-                value={messId}
-                onChangeText={(text) => setMessId(text.toUpperCase())}
-                onFocus={() => setFocusedInput(true)}
-                onBlur={() => setFocusedInput(false)}
-                autoCapitalize="characters"
-                editable={!isLoading}
-                autoFocus
-                returnKeyType="join"
-                onSubmitEditing={handleJoin}
-                maxLength={20}
-              />
-            </View>
+              {/* Icon - smaller when keyboard is visible */}
+              {!keyboardVisible && (
+                <View style={styles.iconContainer}>
+                  <Text style={styles.icon}>✨</Text>
+                </View>
+              )}
 
-            <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
-              <TouchableOpacity
-                style={[styles.button, isLoading && styles.buttonLoading]}
-                onPress={handleJoin}
-                activeOpacity={0.8}
-                disabled={isLoading}
-              >
-                <Text style={styles.buttonText}>
-                  {isLoading ? "JOINING..." : "JOIN MESS"}
+              {/* Header - compact when keyboard is visible */}
+              <View style={[styles.header, keyboardVisible && styles.headerCompact]}>
+                <Text style={[styles.title, keyboardVisible && styles.titleCompact]}>
+                  Join Existing Mess
                 </Text>
-              </TouchableOpacity>
+                <Text style={[styles.subtitle, keyboardVisible && styles.subtitleCompact]}>
+                  Enter the Mess ID shared by your mess admin
+                </Text>
+              </View>
+
+              {/* Error Message */}
+              {errorMessage && (
+                <Animated.View style={[styles.errorContainer, { opacity: errorFade }]}>
+                  <Text style={styles.error}>⚠️ {errorMessage}</Text>
+                </Animated.View>
+              )}
+
+              {/* Input Field */}
+              <View style={styles.inputContainer}>
+                <Text style={styles.inputLabel}>MESS ID</Text>
+                <View
+                  style={[
+                    styles.inputBox,
+                    focusedInput && styles.inputFocused,
+                    errorMessage && styles.inputError,
+                  ]}
+                >
+                  <TextInput
+                    placeholder="e.g., SZRHYU"
+                    placeholderTextColor="#6B7994"
+                    value={messId}
+                    onChangeText={(text) => {
+                      setMessId(text.toUpperCase().trim());
+                      setErrorMessage("");
+                    }}
+                    onFocus={() => setFocusedInput(true)}
+                    onBlur={() => setFocusedInput(false)}
+                    style={styles.input}
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    autoComplete="off"
+                    editable={!isLoading}
+                    onSubmitEditing={handleJoin}
+                    returnKeyType="join"
+                    maxLength={MAX_MESS_ID_LENGTH}
+                  />
+                </View>
+              </View>
+
+              {/* Join Button */}
+              <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+                <TouchableOpacity
+                  style={[
+                    styles.button,
+                    isLoading && styles.buttonDisabled,
+                  ]}
+                  onPress={handleJoin}
+                  disabled={isLoading}
+                  activeOpacity={0.8}
+                >
+                  {isLoading ? (
+                    <View style={styles.buttonContent}>
+                      <ActivityIndicator color="#FFF" size="small" />
+                      <Text style={styles.buttonText}>JOINING...</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.buttonText}>JOIN MESS</Text>
+                  )}
+                </TouchableOpacity>
+              </Animated.View>
+
+              {/* Divider - hide when keyboard is visible */}
+              {!keyboardVisible && (
+                <View style={styles.divider}>
+                  <Text style={styles.dividerText}>DON'T HAVE AN INVITE?</Text>
+                </View>
+              )}
+
+              {/* Create Mess Link - hide when keyboard is visible */}
+              {!keyboardVisible && (
+                <TouchableOpacity
+                  style={styles.secondaryButton}
+                  onPress={() => {
+                    if (!isLoading) {
+                      router.push("/mess/create");
+                    }
+                  }}
+                  disabled={isLoading}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.secondaryButtonText}>Create New Mess</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Help Card - hide when keyboard is visible */}
+              {!keyboardVisible && (
+                <View style={styles.helpCard}>
+                  <Text style={styles.helpTitle}>✅ WHAT HAPPENS NEXT</Text>
+                  <Text style={styles.helpItem}>• You'll join the mess instantly</Text>
+                  <Text style={styles.helpItem}>• Access shared meals and expenses</Text>
+                  <Text style={styles.helpItem}>• Connect with your mess members</Text>
+                  <Text style={styles.helpItem}>• Start tracking your mess activities</Text>
+                </View>
+              )}
             </Animated.View>
-
-            <View style={styles.dividerContainer}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>DON'T HAVE A MESS ID?</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => router.push("/mess/create")}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.secondaryButtonText}>
-                Create Your Own Mess
-              </Text>
-            </TouchableOpacity>
-
-            <View style={styles.infoBox}>
-              <Text style={styles.infoTitle}>💡 HOW TO GET MESS ID</Text>
-              <Text style={styles.infoText}>
-                • Ask your mess admin for the Mess ID{"\n"}• It's a unique code
-                for your group{"\n"}• Usually 6 characters long{"\n"}•
-                Case-sensitive, so enter it exactly as shared
-              </Text>
-            </View>
-          </View>
-        </Animated.View>
-      </KeyboardAvoidingView>
-    </TouchableWithoutFeedback>
+          </ScrollView>
+        </View>
+      </TouchableWithoutFeedback>
+    </KeyboardAvoidingView>
   );
 }
 
+// ==================== STYLES ====================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0F172A",
+    backgroundColor: "#0A1628",
   },
-  gradientBackground: {
-    position: "absolute",
-    width: "100%",
-    height: "100%",
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 20,
+    paddingBottom: 40,
   },
-  circle1: {
-    position: "absolute",
-    width: 400,
-    height: 400,
-    borderRadius: 200,
-    backgroundColor: "rgba(99, 102, 241, 0.06)",
-    top: -150,
-    right: -120,
+  backButton: {
+    marginTop: 50,
+    marginLeft: 20,
+    marginBottom: 10,
   },
-  circle2: {
-    position: "absolute",
-    width: 320,
-    height: 320,
-    borderRadius: 160,
-    backgroundColor: "rgba(139, 92, 246, 0.08)",
-    bottom: -100,
-    left: -100,
-  },
-  circle3: {
-    position: "absolute",
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    backgroundColor: "rgba(59, 130, 246, 0.07)",
-    top: "45%",
-    right: -60,
+  backButtonText: {
+    color: "#7B8CDE",
+    fontSize: 16,
+    fontWeight: "600",
   },
   content: {
     flex: 1,
-    padding: 24,
-    justifyContent: "center",
-  },
-  backButton: {
-    position: "absolute",
-    top: 60,
-    left: 24,
-    zIndex: 10,
-  },
-  backButtonText: {
-    color: "#6366F1",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  header: {
-    alignItems: "center",
-    marginBottom: 48,
   },
   iconContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 20,
-    backgroundColor: "rgba(99, 102, 241, 0.1)",
-    justifyContent: "center",
+    width: 40,
+    height: 40,
+    backgroundColor: "#1A2847",
+    borderRadius: 22,
     alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "center",
     marginBottom: 24,
     borderWidth: 1,
-    borderColor: "rgba(99, 102, 241, 0.2)",
+    borderColor: "#2A3B5F",
   },
-  iconEmoji: {
-    fontSize: 40,
+  icon: {
+    fontSize: 24,
+  },
+  header: {
+    marginBottom: 22,
+  },
+  headerCompact: {
+    marginBottom: 15,
   },
   title: {
-    fontSize: 32,
-    fontWeight: "800",
     color: "#FFFFFF",
-    marginBottom: 10,
+    fontSize: 24,
+    fontWeight: "700",
+    marginBottom: 8,
+    textAlign: "center",
     letterSpacing: -0.5,
   },
-  subtitle: {
+  titleCompact: {
     fontSize: 15,
-    color: "#94A3B8",
-    textAlign: "center",
-    maxWidth: 300,
-    lineHeight: 22,
+    marginBottom: 8,
   },
-  form: {
-    gap: 16,
+  subtitle: {
+    color: "#8B95B0",
+    fontSize: 12,
+    lineHeight: 17,
+    textAlign: "center",
+    paddingHorizontal: 20,
+  },
+  subtitleCompact: {
+    fontSize: 14,
+    lineHeight: 20,
+    paddingHorizontal: 10,
   },
   errorContainer: {
-    backgroundColor: "rgba(239, 68, 68, 0.15)",
+    backgroundColor: "#991B1B",
     borderRadius: 12,
-    borderWidth: 1,
-    borderLeftWidth: 4,
-    borderColor: "rgba(239, 68, 68, 0.3)",
-    borderLeftColor: "#EF4444",
-    marginBottom: 8,
-    overflow: "hidden",
-  },
-  errorContent: {
-    flexDirection: "row",
-    alignItems: "center",
     padding: 14,
-    paddingRight: 12,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "#B91C1C",
   },
-  errorIcon: {
-    fontSize: 18,
-    marginRight: 10,
-  },
-  errorText: {
-    flex: 1,
-    color: "#FCA5A5",
+  error: {
+    color: "#FEE2E2",
     fontSize: 14,
     fontWeight: "600",
-    lineHeight: 20,
-  },
-  errorClose: {
-    width: 24,
-    height: 24,
-    justifyContent: "center",
-    alignItems: "center",
-    marginLeft: 8,
-  },
-  errorCloseText: {
-    color: "#FCA5A5",
-    fontSize: 18,
-    fontWeight: "600",
+    textAlign: "center",
   },
   inputContainer: {
-    backgroundColor: "rgba(30, 41, 59, 0.5)",
-    borderRadius: 12,
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 14,
-    borderWidth: 1,
-    borderColor: "rgba(71, 85, 105, 0.3)",
-  },
-  inputFocused: {
-    borderColor: "#6366F1",
-    backgroundColor: "rgba(30, 41, 59, 0.7)",
-    borderWidth: 2,
-  },
-  inputError: {
-    borderColor: "#EF4444",
-    borderWidth: 2,
+    marginBottom: 15,
   },
   inputLabel: {
-    fontSize: 11,
+    color: "#8B95B0",
+    fontSize: 12,
     fontWeight: "700",
-    color: "#94A3B8",
-    letterSpacing: 0.8,
-    marginBottom: 8,
+    letterSpacing: 1.2,
+    marginBottom: 5,
+    marginLeft: 4,
+  },
+  inputBox: {
+    backgroundColor: "#1A2847",
+    borderWidth: 2,
+    borderColor: "#2A3B5F",
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 12,
+  },
+  inputFocused: {
+    borderColor: "#5B6EE1",
+    backgroundColor: "#1E2D4D",
+  },
+  inputError: {
+    borderColor: "#DC2626",
   },
   input: {
-    fontSize: 16,
     color: "#FFFFFF",
-    padding: 0,
-    height: 24,
+    fontSize: 16,
+    fontWeight: "400",
+    letterSpacing: 0.5,
   },
   button: {
-    backgroundColor: "#6366F1",
-    padding: 18,
-    borderRadius: 12,
+    backgroundColor: "#5B6EE1",
+    paddingVertical: 18,
+    borderRadius: 16,
     alignItems: "center",
-    marginTop: 8,
-    shadowColor: "#6366F1",
+    marginBottom: 20,
+    shadowColor: "#5B6EE1",
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.35,
+    shadowOpacity: 0.3,
     shadowRadius: 12,
     elevation: 8,
   },
-  buttonLoading: {
-    backgroundColor: "#4F46E5",
-    opacity: 0.7,
+  buttonDisabled: {
+    opacity: 0.6,
   },
-  buttonText: {
-    color: "#FFFFFF",
-    fontSize: 15,
-    fontWeight: "800",
-    letterSpacing: 1.2,
-  },
-  dividerContainer: {
+  buttonContent: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    paddingVertical: 8,
-    marginTop: 8,
   },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: "rgba(71, 85, 105, 0.3)",
+  buttonText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 16,
+    letterSpacing: 1.5,
+  },
+  divider: {
+    alignItems: "center",
+    marginVertical: 24,
   },
   dividerText: {
-    fontSize: 10,
+    color: "#6B7994",
+    fontSize: 12,
     fontWeight: "700",
-    color: "#64748B",
-    letterSpacing: 0.8,
+    letterSpacing: 1.2,
   },
   secondaryButton: {
-    backgroundColor: "rgba(99, 102, 241, 0.1)",
-    padding: 16,
-    borderRadius: 12,
+    backgroundColor: "transparent",
+    paddingVertical: 18,
+    borderRadius: 16,
     alignItems: "center",
     borderWidth: 2,
-    borderColor: "rgba(99, 102, 241, 0.3)",
+    borderColor: "#2A3B5F",
+    marginBottom: 24,
   },
   secondaryButtonText: {
-    color: "#818CF8",
-    fontSize: 15,
+    color: "#7B8CDE",
     fontWeight: "700",
+    fontSize: 16,
     letterSpacing: 0.5,
   },
-  infoBox: {
-    backgroundColor: "rgba(59, 130, 246, 0.08)",
-    padding: 18,
-    borderRadius: 12,
-    marginTop: 8,
+  helpCard: {
+    backgroundColor: "#0F1C33",
+    borderRadius: 16,
+    padding: 20,
     borderWidth: 1,
-    borderColor: "rgba(59, 130, 246, 0.2)",
+    borderColor: "#1E3A5F",
   },
-  infoTitle: {
-    color: "#93C5FD",
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.8,
-    marginBottom: 10,
-  },
-  infoText: {
-    color: "#BFDBFE",
+  helpTitle: {
+    color: "#6EE7B7",
     fontSize: 13,
-    lineHeight: 22,
+    fontWeight: "700",
+    letterSpacing: 1,
+    marginBottom: 16,
+  },
+  helpItem: {
+    color: "#8B95B0",
+    fontSize: 14,
+    lineHeight: 24,
+    marginBottom: 4,
   },
 });

@@ -220,23 +220,25 @@ export default function Dashboard() {
       return;
     }
 
+    const monthStr = `${selectedMonth.getFullYear()}-${String(selectedMonth.getMonth() + 1).padStart(2, "0")}`;
+
     if (action === "Add Deposit") {
-      router.push("/mess/deposits");
+      router.push(`/mess/deposits?month=${monthStr}`);
       return;
     }
 
     if (action === "Add Expense") {
-      router.push("/mess/expenses");
+      router.push(`/mess/expenses?month=${monthStr}`);
       return;
     }
 
     if (action === "Meal Entry") {
-      router.push("/mess/meals");
+      router.push(`/mess/meals?month=${monthStr}`);
       return;
     }
 
     if (action === "Add Guest Meal") {
-      router.push("/mess/guestmeal");
+      router.push("/mess/guestmeal"); // Guest meal likely uses current date or has its own selector
       return;
     }
   };
@@ -1027,7 +1029,10 @@ export default function Dashboard() {
               {/* Deposit History */}
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonGreen]}
-                onPress={() => router.push(`/mess/deposits?month=${selectedMonth.toISOString()}`)}
+                onPress={() => {
+                  const monthStr = `${selectedMonth.getFullYear()}-${String(selectedMonth.getMonth() + 1).padStart(2, "0")}`;
+                  router.push(`/mess/deposits?month=${monthStr}`);
+                }}
                 activeOpacity={0.75}
               >
                 <Wallet size={22} color="#fff" />
@@ -1040,7 +1045,10 @@ export default function Dashboard() {
               {/* Expense History */}
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonRed]}
-                onPress={() => router.push(`/mess/expenses?month=${selectedMonth.toISOString()}`)}
+                onPress={() => {
+                  const monthStr = `${selectedMonth.getFullYear()}-${String(selectedMonth.getMonth() + 1).padStart(2, "0")}`;
+                  router.push(`/mess/expenses?month=${monthStr}`);
+                }}
                 activeOpacity={0.75}
               >
                 <Receipt size={22} color="#fff" />
@@ -1053,7 +1061,10 @@ export default function Dashboard() {
               {/* Meal History */}
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonBlue]}
-                onPress={() => router.push(`/mess/meals?month=${selectedMonth.toISOString()}`)}
+                onPress={() => {
+                  const monthStr = `${selectedMonth.getFullYear()}-${String(selectedMonth.getMonth() + 1).padStart(2, "0")}`;
+                  router.push(`/mess/meals?month=${monthStr}`);
+                }}
                 activeOpacity={0.75}
               >
                 <UtensilsCrossed size={22} color="#fff" />

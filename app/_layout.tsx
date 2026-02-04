@@ -46,8 +46,8 @@ function ProtectedStack() {
     // Authenticated users on auth screens should be redirected
     if (appState !== "unauthenticated" && inAuthGroup) {
       if (appState === "no_mess") {
-        console.log("Redirecting from auth to join/create");
-        router.replace("/mess/join"); // Or /mess/create which is usually same flow
+        console.log("Redirecting from auth to select");
+        router.replace("/mess/select");
       } else {
         console.log("Redirecting from auth to dashboard");
         router.replace("/mess/dashboard");
@@ -55,10 +55,10 @@ function ProtectedStack() {
       return;
     }
 
-    // Users without a mess should be on join/create screen
-    if (appState === "no_mess" && inMessGroup && segments[1] !== "join" && segments[1] !== "create") {
-      console.log("Redirecting to mess join");
-      router.replace("/mess/join");
+    // Users without a mess should be on select/join/create screen
+    if (appState === "no_mess" && inMessGroup && segments[1] !== "select" && segments[1] !== "join" && segments[1] !== "create") {
+      console.log("Redirecting to mess select");
+      router.replace("/mess/select");
       return;
     }
 

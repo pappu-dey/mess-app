@@ -1,4 +1,4 @@
-// Expenses.tsx
+// Expenses.tsx - Fixed and Improved Version
 import { format } from "date-fns";
 import { useLocalSearchParams } from "expo-router";
 import {
@@ -8,6 +8,7 @@ import {
   doc,
   increment,
   onSnapshot,
+  orderBy,
   query,
   serverTimestamp,
   setDoc,
@@ -34,7 +35,7 @@ import { useApp } from "../../context/AppContext";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../firebase/firebaseConfig";
 
-// ---------- helpers ----------
+// ==================== HELPERS ====================
 const formatDateTime = (date: Date) =>
   date.toLocaleString("en-IN", {
     day: "2-digit",
@@ -45,7 +46,7 @@ const formatDateTime = (date: Date) =>
     hour12: true,
   });
 
-// ---------- types ----------
+// ==================== TYPES ====================
 type ExpenseItem = {
   id: string;
   amount: number;
@@ -57,6 +58,7 @@ type ExpenseItem = {
   updatedAt?: any;
 };
 
+// ==================== MAIN COMPONENT ====================
 export default function Expenses() {
   /* ================= CONTEXT ================= */
   const params = useLocalSearchParams();
@@ -66,7 +68,7 @@ export default function Expenses() {
 
   // Initialize selected month from URL parameter or default to current month
   const getInitialMonth = () => {
-    if (params.month && typeof params.month === 'string') {
+    if (params.month && typeof params.month === "string") {
       return params.month;
     }
     return format(new Date(), "yyyy-MM");
@@ -89,14 +91,14 @@ export default function Expenses() {
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const [showActionMenu, setShowActionMenu] = useState(false);
-  const [selectedExpense, setSelectedExpense] = useState<ExpenseItem | null>(
-    null,
-  );
+  const [selectedExpense, setSelectedExpense] = useState<ExpenseItem | null>(null);
 
+  /* ================= EARLY RETURN FOR NO MESS ================= */
   if (!activeMessId) {
     return (
-      <View style={styles.center}>
+      <View style={[styles.container, styles.center]}>
         <Text style={styles.errorText}>No active mess selected</Text>
+        <Text style={styles.errorSubtext}>Please select or join a mess first</Text>
       </View>
     );
   }
@@ -107,65 +109,100 @@ export default function Expenses() {
 
   /* ================= FETCH EXPENSES ================= */
   useEffect(() => {
-    const q = query(expensesRef, where("type", "==", "expense"));
-
-    const unsub = onSnapshot(q, async (snap) => {
-      const list: ExpenseItem[] = snap.docs
-        .map((d) => {
-          const data = d.data();
-          return {
-            id: d.id,
-            amount: data.amount || 0,
-            purpose: data.purpose || "",
-            date: data.date || "",
-            isCommon: data.isCommon || false,
-            edited: data.edited ?? false,
-            createdAt: data.createdAt,
-            updatedAt: data.updatedAt,
-          };
-        })
-        .filter((item) => item.amount > 0); // Hide guest meal adjustments (negative values)
-
-      list.sort((a, b) => {
-        if (!a.createdAt || !b.createdAt) return 0;
-        return b.createdAt.seconds - a.createdAt.seconds;
-      });
-
-      setExpenses(list);
-
-      // Calculate total from visible expenses only (Gross Expense)
-      const total = list.reduce((sum, exp) => sum + exp.amount, 0);
-      setTotalExpenses(total);
-
-      // We do NOT fetch totalExpense from monthRef anymore because that value
-      // is the "Net Expense" (Real - GuestAdjustments), but here we want
-      // to show the "Gross Expense" (sum of all positive bills).
-
+    if (!activeMessId) {
       setLoading(false);
-    });
+      return;
+    }
 
-    return unsub;
+    setLoading(true);
+
+    // Query for expenses
+    const q = query(
+      expensesRef,
+      where("type", "==", "expense"),
+      orderBy("createdAt", "desc")
+    );
+
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const list: ExpenseItem[] = snap.docs
+          .map((d) => {
+            const data = d.data();
+            return {
+              id: d.id,
+              amount: data.amount || 0,
+              purpose: data.purpose || "",
+              date: data.date || "",
+              isCommon: data.isCommon || false,
+              edited: data.edited ?? false,
+              createdAt: data.createdAt,
+              updatedAt: data.updatedAt,
+            };
+          })
+          .filter((item) => item.amount > 0); // Hide guest meal adjustments (negative values)
+
+        setExpenses(list);
+
+        // Calculate total from visible expenses only (Gross Expense)
+        const total = list.reduce((sum, exp) => sum + exp.amount, 0);
+        setTotalExpenses(total);
+
+        setLoading(false);
+        setRefreshing(false);
+      },
+      (error) => {
+        console.error("Error fetching expenses:", error);
+        // Don't show error for empty collections
+        if (error.code !== "failed-precondition") {
+          Alert.alert("Error", "Failed to load expenses. Please try again.");
+        }
+        setLoading(false);
+        setRefreshing(false);
+      }
+    );
+
+    return () => unsub();
   }, [activeMessId, monthId]);
 
-  /* ================= SAVE EXPENSE ================= */
+  /* ================= SAVE EXPENSE (MANAGER ONLY) ================= */
   const saveExpense = async () => {
+    if (!isManager) {
+      Alert.alert("Access Denied", "Only managers can add or edit expenses");
+      return;
+    }
+
     const amt = parseFloat(amount);
     if (isNaN(amt) || amt <= 0) {
-      return Alert.alert("Error", "Enter valid amount");
+      return Alert.alert("Invalid Amount", "Please enter a valid amount greater than 0");
     }
     if (!purpose.trim()) {
-      return Alert.alert("Error", "Enter expense purpose");
+      return Alert.alert("Missing Information", "Please enter expense purpose");
     }
 
     setSubmitting(true);
     try {
-      // Ensure month document exists
-      await setDoc(monthRef, { month: monthId }, { merge: true });
+      // Ensure month document exists with initial data
+      await setDoc(
+        monthRef,
+        {
+          month: monthId,
+          totalExpense: 0,
+          totalDeposit: 0,
+          createdAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
 
       if (editingId) {
         // Update existing expense
         const old = expenses.find((e) => e.id === editingId);
-        if (!old) return;
+        if (!old) {
+          Alert.alert("Error", "Expense not found");
+          setSubmitting(false);
+          return;
+        }
+
         const diff = amt - old.amount;
 
         await updateDoc(doc(expensesRef, editingId), {
@@ -177,7 +214,12 @@ export default function Expenses() {
           updatedAt: serverTimestamp(),
         });
 
-        await updateDoc(monthRef, { totalExpense: increment(diff) });
+        await updateDoc(monthRef, {
+          totalExpense: increment(diff),
+          updatedAt: serverTimestamp(),
+        });
+
+        Alert.alert("Success", "Expense updated successfully");
       } else {
         // Add new expense
         await addDoc(expensesRef, {
@@ -190,25 +232,42 @@ export default function Expenses() {
           createdAt: serverTimestamp(),
         });
 
-        await updateDoc(monthRef, { totalExpense: increment(amt) });
+        await updateDoc(monthRef, {
+          totalExpense: increment(amt),
+          updatedAt: serverTimestamp(),
+        });
+
+        Alert.alert("Success", "Expense added successfully");
       }
 
       closeModal();
-      // Refresh dashboard to show updated data instantly
       refreshDashboard();
-    } catch (e) {
-      console.error(e);
-      Alert.alert("Error", "Failed to save expense");
+    } catch (error: any) {
+      console.error("Error saving expense:", error);
+
+      let errorMsg = "Failed to save expense. Please try again.";
+      if (error.code === "permission-denied") {
+        errorMsg = "You don't have permission to modify expenses";
+      } else if (error.code === "unavailable") {
+        errorMsg = "Network error. Please check your connection";
+      }
+
+      Alert.alert("Error", errorMsg);
     } finally {
       setSubmitting(false);
     }
   };
 
-  /* ================= DELETE EXPENSE ================= */
+  /* ================= DELETE EXPENSE (MANAGER ONLY) ================= */
   const confirmDelete = (item: ExpenseItem) => {
+    if (!isManager) {
+      Alert.alert("Access Denied", "Only managers can delete expenses");
+      return;
+    }
+
     Alert.alert(
       "Delete Expense",
-      `Are you sure you want to delete ₹${item.amount} for ${item.purpose}?`,
+      `Are you sure you want to delete ₹${item.amount.toLocaleString("en-IN")} for ${item.purpose}?`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -216,21 +275,36 @@ export default function Expenses() {
           style: "destructive",
           onPress: () => deleteExpense(item.id, item.amount),
         },
-      ],
+      ]
     );
   };
 
   const deleteExpense = async (id: string, amt: number) => {
+    if (!isManager) {
+      Alert.alert("Access Denied", "Only managers can delete expenses");
+      return;
+    }
+
     try {
       await deleteDoc(doc(expensesRef, id));
-      await updateDoc(monthRef, { totalExpense: increment(-amt) });
+      await updateDoc(monthRef, {
+        totalExpense: increment(-amt),
+        updatedAt: serverTimestamp(),
+      });
+
       setShowActionMenu(false);
       setSelectedExpense(null);
-      // Refresh dashboard to show updated data instantly
       refreshDashboard();
-    } catch (e) {
-      console.error(e);
-      Alert.alert("Error", "Failed to delete expense");
+      Alert.alert("Success", "Expense deleted successfully");
+    } catch (error: any) {
+      console.error("Error deleting expense:", error);
+
+      let errorMsg = "Failed to delete expense. Please try again.";
+      if (error.code === "permission-denied") {
+        errorMsg = "You don't have permission to delete expenses";
+      }
+
+      Alert.alert("Error", errorMsg);
     }
   };
 
@@ -245,9 +319,14 @@ export default function Expenses() {
   };
 
   const openEditModal = (item: ExpenseItem) => {
+    if (!isManager) {
+      Alert.alert("Access Denied", "Only managers can edit expenses");
+      return;
+    }
+
     setAmount(String(item.amount));
     setPurpose(item.purpose);
-    setSelectedDate(new Date());
+    setSelectedDate(item.createdAt?.toDate() || new Date());
     setIsCommon(item.isCommon);
     setEditingId(item.id);
     setShowActionMenu(false);
@@ -255,6 +334,16 @@ export default function Expenses() {
   };
 
   const openActionMenu = (item: ExpenseItem) => {
+    if (!isManager) {
+      // For members, just show the expense details without edit/delete options
+      Alert.alert(
+        "Expense Details",
+        `Amount: ₹${item.amount.toLocaleString("en-IN")}\nPurpose: ${item.purpose}\nDate: ${item.date}${item.isCommon ? "\nType: Common Charge" : ""}`,
+        [{ text: "OK" }]
+      );
+      return;
+    }
+
     setSelectedExpense(item);
     setShowActionMenu(true);
   };
@@ -288,19 +377,22 @@ export default function Expenses() {
   };
 
   /* ================= REFRESH ================= */
-  const onRefresh = useCallback(async () => {
+  const onRefresh = useCallback(() => {
     setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 1000);
+    // Firebase listener will automatically update the data
   }, []);
 
+  /* ================= LOADING STATE ================= */
   if (loading) {
     return (
-      <View style={styles.center}>
+      <View style={[styles.container, styles.center]}>
         <ActivityIndicator size="large" color="#6366F1" />
+        <Text style={styles.loadingText}>Loading expenses...</Text>
       </View>
     );
   }
 
+  /* ================= MAIN RENDER ================= */
   return (
     <View style={styles.container}>
       {/* Month Selector Header */}
@@ -333,32 +425,32 @@ export default function Expenses() {
         </Text>
       </View>
 
+      {/* Expenses List */}
       <FlatList
         data={expenses}
         keyExtractor={(item) => item.id}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#6366F1"
+          />
         }
-        contentContainerStyle={{ paddingBottom: 100 }}
+        contentContainerStyle={styles.listContent}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>No expenses for {getMonthName()}</Text>
-            {isManager && (
-              <Text style={styles.emptySubtext}>
-                Tap the + button to add an expense for this month
-              </Text>
-            )}
-            {!isManager && (
-              <Text style={styles.emptySubtext}>
-                No expenses have been recorded for this mess and month yet
-              </Text>
-            )}
+            <Text style={styles.emptySubtext}>
+              {isManager
+                ? "Tap the + button to add an expense for this month"
+                : "No expenses have been recorded for this month yet"}
+            </Text>
           </View>
         }
         renderItem={({ item }) => (
           <TouchableOpacity
             style={styles.card}
-            onPress={() => isManager && openActionMenu(item)}
+            onPress={() => openActionMenu(item)}
             activeOpacity={0.7}
           >
             <View style={styles.cardHeader}>
@@ -393,179 +485,188 @@ export default function Expenses() {
         )}
       />
 
-      {/* Add Expense Button */}
+      {/* Add Expense Button (Manager Only) */}
       {isManager && (
-        <TouchableOpacity style={styles.fab} onPress={() => setShowModal(true)}>
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() => setShowModal(true)}
+          activeOpacity={0.8}
+        >
           <Text style={styles.fabText}>＋</Text>
         </TouchableOpacity>
       )}
 
-      {/* Add/Edit Modal */}
-      <Modal visible={showModal} transparent animationType="slide">
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-          style={styles.modalOverlay}
-        >
-          <TouchableOpacity
-            style={styles.modalBackdrop}
-            onPress={closeModal}
-            activeOpacity={1}
-          />
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>
-              {editingId ? "Edit Expense" : "Add New Expense"}
-            </Text>
-
-            {/* Amount Input */}
-            <Text style={styles.fieldLabel}>Amount (₹)</Text>
-            <TextInput
-              placeholder="Enter amount"
-              placeholderTextColor="#64748B"
-              keyboardType="numeric"
-              value={amount}
-              onChangeText={setAmount}
-              style={styles.input}
-              autoFocus={!editingId}
+      {/* Add/Edit Modal (Manager Only) */}
+      {isManager && (
+        <Modal visible={showModal} transparent animationType="slide">
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            style={styles.modalOverlay}
+          >
+            <TouchableOpacity
+              style={styles.modalBackdrop}
+              onPress={closeModal}
+              activeOpacity={1}
             />
-
-            {/* Purpose Input */}
-            <Text style={styles.fieldLabel}>Expense For</Text>
-            <TextInput
-              placeholder="e.g., Groceries, Electricity, etc."
-              placeholderTextColor="#64748B"
-              value={purpose}
-              onChangeText={setPurpose}
-              style={styles.input}
-            />
-
-            {/* Date Selector */}
-            <Text style={styles.fieldLabel}>Date & Time</Text>
-            <View style={styles.dateSelector}>
-              <TouchableOpacity
-                style={styles.dateButton}
-                onPress={() => adjustDate(-1)}
-              >
-                <Text style={styles.dateButtonText}>◀</Text>
-              </TouchableOpacity>
-
-              <Text style={styles.dateDisplay}>
-                {formatDateTime(selectedDate)}
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>
+                {editingId ? "Edit Expense" : "Add New Expense"}
               </Text>
 
-              <TouchableOpacity
-                style={styles.dateButton}
-                onPress={() => adjustDate(1)}
-              >
-                <Text style={styles.dateButtonText}>▶</Text>
-              </TouchableOpacity>
-            </View>
-
-            <TouchableOpacity onPress={() => setSelectedDate(new Date())}>
-              <Text style={styles.todayLink}>Set to Now</Text>
-            </TouchableOpacity>
-
-            {/* Common Charge Toggle */}
-            <View style={styles.switchContainer}>
-              <View>
-                <Text style={styles.switchLabel}>Common Charge</Text>
-                <Text style={styles.switchSubtext}>
-                  Shared expense for all members
-                </Text>
-              </View>
-              <Switch
-                value={isCommon}
-                onValueChange={setIsCommon}
-                trackColor={{ false: "#334155", true: "#6366F1" }}
-                thumbColor={isCommon ? "#FFF" : "#94A3B8"}
+              {/* Amount Input */}
+              <Text style={styles.fieldLabel}>Amount (₹)</Text>
+              <TextInput
+                placeholder="Enter amount"
+                placeholderTextColor="#64748B"
+                keyboardType="numeric"
+                value={amount}
+                onChangeText={setAmount}
+                style={styles.input}
+                autoFocus={!editingId}
               />
-            </View>
 
-            <TouchableOpacity
-              style={[styles.saveBtn, submitting && styles.saveBtnDisabled]}
-              onPress={saveExpense}
-              disabled={submitting}
-            >
-              <Text style={styles.saveBtnText}>
-                {submitting
-                  ? "Saving..."
-                  : editingId
-                    ? "Update Expense"
-                    : "Add Expense"}
-              </Text>
-            </TouchableOpacity>
+              {/* Purpose Input */}
+              <Text style={styles.fieldLabel}>Expense For</Text>
+              <TextInput
+                placeholder="e.g., Groceries, Electricity, etc."
+                placeholderTextColor="#64748B"
+                value={purpose}
+                onChangeText={setPurpose}
+                style={styles.input}
+              />
 
-            <TouchableOpacity style={styles.cancelBtn} onPress={closeModal}>
-              <Text style={styles.cancelText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+              {/* Date Selector */}
+              <Text style={styles.fieldLabel}>Date & Time</Text>
+              <View style={styles.dateSelector}>
+                <TouchableOpacity
+                  style={styles.dateButton}
+                  onPress={() => adjustDate(-1)}
+                >
+                  <Text style={styles.dateButtonText}>◀</Text>
+                </TouchableOpacity>
 
-      {/* Action Menu Modal */}
-      <Modal visible={showActionMenu} transparent animationType="fade">
-        <View style={styles.actionModalOverlay}>
-          <TouchableOpacity
-            style={styles.actionModalBackdrop}
-            onPress={() => {
-              setShowActionMenu(false);
-              setSelectedExpense(null);
-            }}
-            activeOpacity={1}
-          />
-          <View style={styles.actionModalCard}>
-            <Text style={styles.actionModalTitle}>Manage Expense</Text>
-
-            {selectedExpense && (
-              <View style={styles.actionExpenseInfo}>
-                <Text style={styles.actionExpenseAmount}>
-                  ₹{selectedExpense.amount.toLocaleString("en-IN")}
+                <Text style={styles.dateDisplay}>
+                  {formatDateTime(selectedDate)}
                 </Text>
-                <Text style={styles.actionExpensePurpose}>
-                  {selectedExpense.purpose}
-                </Text>
-                <Text style={styles.actionExpenseDate}>
-                  {selectedExpense.date}
-                </Text>
-                {selectedExpense.isCommon && (
-                  <View style={styles.commonBadgeLarge}>
-                    <Text style={styles.commonTextLarge}>Common Charge</Text>
-                  </View>
-                )}
+
+                <TouchableOpacity
+                  style={styles.dateButton}
+                  onPress={() => adjustDate(1)}
+                >
+                  <Text style={styles.dateButtonText}>▶</Text>
+                </TouchableOpacity>
               </View>
-            )}
 
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => selectedExpense && openEditModal(selectedExpense)}
-            >
-              <Text style={styles.actionButtonIcon}>✏️</Text>
-              <Text style={styles.actionButtonText}>Edit Expense</Text>
-            </TouchableOpacity>
+              <TouchableOpacity onPress={() => setSelectedDate(new Date())}>
+                <Text style={styles.todayLink}>Set to Now</Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.actionButton, styles.actionButtonDanger]}
-              onPress={() => selectedExpense && confirmDelete(selectedExpense)}
-            >
-              <Text style={styles.actionButtonIcon}>🗑️</Text>
-              <Text
-                style={[styles.actionButtonText, styles.actionButtonTextDanger]}
+              {/* Common Charge Toggle */}
+              <View style={styles.switchContainer}>
+                <View>
+                  <Text style={styles.switchLabel}>Common Charge</Text>
+                  <Text style={styles.switchSubtext}>
+                    Shared expense for all members
+                  </Text>
+                </View>
+                <Switch
+                  value={isCommon}
+                  onValueChange={setIsCommon}
+                  trackColor={{ false: "#334155", true: "#6366F1" }}
+                  thumbColor={isCommon ? "#FFF" : "#94A3B8"}
+                />
+              </View>
+
+              {/* Action Buttons */}
+              <TouchableOpacity
+                style={[styles.saveBtn, submitting && styles.saveBtnDisabled]}
+                onPress={saveExpense}
+                disabled={submitting}
               >
-                Delete Expense
-              </Text>
-            </TouchableOpacity>
+                <Text style={styles.saveBtnText}>
+                  {submitting
+                    ? "Saving..."
+                    : editingId
+                      ? "Update Expense"
+                      : "Add Expense"}
+                </Text>
+              </TouchableOpacity>
 
+              <TouchableOpacity style={styles.cancelBtn} onPress={closeModal}>
+                <Text style={styles.cancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+      )}
+
+      {/* Action Menu Modal (Manager Only) */}
+      {isManager && (
+        <Modal visible={showActionMenu} transparent animationType="fade">
+          <View style={styles.actionModalOverlay}>
             <TouchableOpacity
-              style={styles.actionButtonCancel}
+              style={styles.actionModalBackdrop}
               onPress={() => {
                 setShowActionMenu(false);
                 setSelectedExpense(null);
               }}
-            >
-              <Text style={styles.actionButtonCancelText}>Cancel</Text>
-            </TouchableOpacity>
+              activeOpacity={1}
+            />
+            <View style={styles.actionModalCard}>
+              <Text style={styles.actionModalTitle}>Manage Expense</Text>
+
+              {selectedExpense && (
+                <View style={styles.actionExpenseInfo}>
+                  <Text style={styles.actionExpenseAmount}>
+                    ₹{selectedExpense.amount.toLocaleString("en-IN")}
+                  </Text>
+                  <Text style={styles.actionExpensePurpose}>
+                    {selectedExpense.purpose}
+                  </Text>
+                  <Text style={styles.actionExpenseDate}>
+                    {selectedExpense.date}
+                  </Text>
+                  {selectedExpense.isCommon && (
+                    <View style={styles.commonBadgeLarge}>
+                      <Text style={styles.commonTextLarge}>Common Charge</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              <TouchableOpacity
+                style={styles.actionButton}
+                onPress={() => selectedExpense && openEditModal(selectedExpense)}
+              >
+                <Text style={styles.actionButtonIcon}>✏️</Text>
+                <Text style={styles.actionButtonText}>Edit Expense</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.actionButton, styles.actionButtonDanger]}
+                onPress={() => selectedExpense && confirmDelete(selectedExpense)}
+              >
+                <Text style={styles.actionButtonIcon}>🗑️</Text>
+                <Text
+                  style={[styles.actionButtonText, styles.actionButtonTextDanger]}
+                >
+                  Delete Expense
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.actionButtonCancel}
+                onPress={() => {
+                  setShowActionMenu(false);
+                  setSelectedExpense(null);
+                }}
+              >
+                <Text style={styles.actionButtonCancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
+      )}
     </View>
   );
 }
@@ -577,15 +678,28 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#0F172A",
   },
-  errorText: { color: "#94A3B8", fontSize: 16 },
+  errorText: {
+    color: "#E2E8F0",
+    fontSize: 18,
+    fontWeight: "600",
+    marginBottom: 8,
+  },
+  errorSubtext: {
+    color: "#94A3B8",
+    fontSize: 14,
+    textAlign: "center",
+  },
+  loadingText: {
+    color: "#94A3B8",
+    marginTop: 12,
+    fontSize: 16,
+  },
 
   header: {
     fontSize: 28,
     fontWeight: "800",
     color: "#FFF",
-    marginTop: 20,
     marginBottom: 4,
   },
   subHeader: { fontSize: 14, color: "#94A3B8", marginBottom: 20 },
@@ -637,6 +751,8 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#EF4444",
   },
+
+  listContent: { paddingBottom: 100 },
 
   card: {
     backgroundColor: "#1E293B",
@@ -755,7 +871,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     maxHeight: "90%",
-    marginBottom: 48,
+    marginBottom: Platform.OS === "ios" ? 0 : 48,
   },
   modalTitle: {
     color: "#FFF",
