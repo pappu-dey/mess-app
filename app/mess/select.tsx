@@ -2,28 +2,32 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { signOut } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import {
+  ChevronRight,
+  Lightbulb,
+  LogOut,
+  Sparkles,
+  Users
+} from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import {
-    Alert,
-    Animated,
-    Modal,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  Alert,
+  Animated,
+  Modal,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import LogoutModal from "../../components/LogoutModal";
-import { auth, db } from "../../firebase/firebaseConfig";
+import { useApp } from "../../context/AppContext";
+import { auth } from "../../firebase/firebaseConfig";
 
 export default function MessSelect() {
   const router = useRouter();
-  
-
+  const { user, refreshData } = useApp();
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
-  const [userName, setUserName] = useState("");
-  const [userEmail, setUserEmail] = useState("");
 
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -34,9 +38,7 @@ export default function MessSelect() {
   const menuSlideAnim = useRef(new Animated.Value(-10)).current;
 
   useEffect(() => {
-    checkUserMess();
-    fetchUserData();
-
+    // Animations only
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -66,46 +68,6 @@ export default function MessSelect() {
       }),
     ]).start();
   }, []);
-
-  const checkUserMess = async () => {
-    try {
-      const user = auth.currentUser;
-      if (user) {
-        const userDoc = await getDoc(doc(db, "users", user.uid));
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
-          if (userData.messId) {
-            // User already has a mess, redirect to dashboard
-            router.replace("/mess/dashboard");
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Error checking user mess:", error);
-    }
-  };
-
-  const fetchUserData = async () => {
-    try {
-      const user = auth.currentUser;
-      if (user) {
-        setUserEmail(user.email || "");
-
-        // Fetch user data from Firestore
-        const userDoc = await getDoc(doc(db, "users", user.uid));
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
-          setUserName(userData.name || userData.displayName || "User");
-        } else {
-          // Fallback to displayName from auth
-          setUserName(user.displayName || "User");
-        }
-      }
-    } catch (error) {
-      console.error("Error fetching user data:", error);
-      setUserName("User");
-    }
-  };
 
   const toggleProfileMenu = () => {
     if (!showProfileMenu) {
@@ -142,17 +104,17 @@ export default function MessSelect() {
     try {
       // Close the profile menu first
       setShowProfileMenu(false);
-      
+
       // Sign out from Firebase
       await signOut(auth);
-      
+
       // Clear AsyncStorage manually to ensure clean logout
       await AsyncStorage.multiRemove([
         "@firebase_user_id",
         "@firebase_user_email",
         "@firebase_auth_token",
       ]);
-      
+
       // Navigate to login screen
       router.replace("/auth/login");
     } catch (error: any) {
@@ -169,7 +131,10 @@ export default function MessSelect() {
     router.push("/mess/create");
   };
 
+  // After successful join/create, AppContext will auto-refresh and navigate
+
   const getInitials = (name: string) => {
+    if (!name) return "U";
     return name
       .split(" ")
       .map((n) => n[0])
@@ -178,26 +143,31 @@ export default function MessSelect() {
       .slice(0, 2);
   };
 
+  const userName = user?.name || "User";
+  const userEmail = user?.email || "";
+
   return (
     <View style={styles.container}>
       {/* Animated Background */}
-      <View style={styles.gradientBackground}>
+      <Animated.View
+        style={[styles.gradientBackground, { opacity: fadeAnim }]}
+      >
         <View style={styles.circle1} />
         <View style={styles.circle2} />
         <View style={styles.circle3} />
-      </View>
+      </Animated.View>
 
       {/* Profile Menu Modal */}
       <Modal
         visible={showProfileMenu}
         transparent
         animationType="none"
-        onRequestClose={toggleProfileMenu}
+        onRequestClose={() => setShowProfileMenu(false)}
       >
         <TouchableOpacity
           style={styles.modalOverlay}
           activeOpacity={1}
-          onPress={toggleProfileMenu}
+          onPress={() => setShowProfileMenu(false)}
         >
           <Animated.View
             style={[
@@ -231,13 +201,14 @@ export default function MessSelect() {
               }}
               activeOpacity={0.7}
             >
-              <Text style={styles.menuItemIcon}>🚪</Text>
+              <LogOut size={22} color="#EF4444" strokeWidth={2.5} />
               <Text style={styles.menuItemText}>Logout</Text>
             </TouchableOpacity>
           </Animated.View>
         </TouchableOpacity>
       </Modal>
 
+      {/* Header */}
       <Animated.View
         style={[
           styles.content,
@@ -247,20 +218,19 @@ export default function MessSelect() {
           },
         ]}
       >
-        {/* Header */}
-        <View style={styles.header}>
-          {/* Profile Section */}
-          <TouchableOpacity
-            style={styles.profileButton}
-            onPress={toggleProfileMenu}
-            activeOpacity={0.8}
-          >
-            <View style={styles.avatarContainer}>
-              <Text style={styles.avatarText}>{getInitials(userName)}</Text>
-            </View>
-            <Text style={styles.profileName}>{userName}</Text>
-          </TouchableOpacity>
+        {/* Profile Section */}
+        <TouchableOpacity
+          style={styles.profileButton}
+          onPress={toggleProfileMenu}
+          activeOpacity={0.8}
+        >
+          <View style={styles.avatarContainer}>
+            <Text style={styles.avatarText}>{getInitials(userName)}</Text>
+          </View>
+          <Text style={styles.profileName}>{userName}</Text>
+        </TouchableOpacity>
 
+        <View style={styles.header}>
           <Text style={styles.title}>Welcome to Mess Manager</Text>
           <Text style={styles.subtitle}>
             Join an existing mess or create your own to get started
@@ -271,15 +241,18 @@ export default function MessSelect() {
         <View style={styles.optionsContainer}>
           {/* Join Mess Card */}
           <Animated.View
-            style={[styles.cardWrapper, { transform: [{ scale: scaleAnim1 }] }]}
+            style={[
+              styles.cardWrapper,
+              { transform: [{ scale: scaleAnim1 }] },
+            ]}
           >
             <TouchableOpacity
-              style={styles.card}
+              style={[styles.card, styles.cardHighlight]}
               onPress={handleJoinPress}
-              activeOpacity={0.9}
+              activeOpacity={0.8}
             >
-              <View style={styles.cardIconContainer}>
-                <Text style={styles.cardIcon}>👥</Text>
+              <View style={[styles.cardIconContainer, styles.iconHighlight]}>
+                <Users size={28} color="#6366F1" strokeWidth={2.5} />
               </View>
               <View style={styles.cardContent}>
                 <Text style={styles.cardTitle}>Join Existing Mess</Text>
@@ -288,7 +261,7 @@ export default function MessSelect() {
                 </Text>
               </View>
               <View style={styles.cardArrow}>
-                <Text style={styles.arrowText}>→</Text>
+                <ChevronRight size={20} color="#6366F1" strokeWidth={2.5} />
               </View>
             </TouchableOpacity>
           </Animated.View>
@@ -302,15 +275,18 @@ export default function MessSelect() {
 
           {/* Create Mess Card */}
           <Animated.View
-            style={[styles.cardWrapper, { transform: [{ scale: scaleAnim2 }] }]}
+            style={[
+              styles.cardWrapper,
+              { transform: [{ scale: scaleAnim2 }] },
+            ]}
           >
             <TouchableOpacity
-              style={[styles.card, styles.cardHighlight]}
+              style={styles.card}
               onPress={handleCreatePress}
-              activeOpacity={0.9}
+              activeOpacity={0.8}
             >
-              <View style={[styles.cardIconContainer, styles.iconHighlight]}>
-                <Text style={styles.cardIcon}>✨</Text>
+              <View style={styles.cardIconContainer}>
+                <Sparkles size={28} color="#8B5CF6" strokeWidth={2.5} />
               </View>
               <View style={styles.cardContent}>
                 <Text style={styles.cardTitle}>Create New Mess</Text>
@@ -319,7 +295,7 @@ export default function MessSelect() {
                 </Text>
               </View>
               <View style={styles.cardArrow}>
-                <Text style={styles.arrowText}>→</Text>
+                <ChevronRight size={20} color="#6366F1" strokeWidth={2.5} />
               </View>
             </TouchableOpacity>
           </Animated.View>
@@ -327,8 +303,11 @@ export default function MessSelect() {
 
         {/* Footer Info */}
         <View style={styles.footer}>
+          <View style={styles.footerIconContainer}>
+            <Lightbulb size={16} color="#93C5FD" strokeWidth={2} />
+          </View>
           <Text style={styles.footerText}>
-            💡 You can switch between messes anytime from settings
+            You can switch between messes anytime from settings
           </Text>
         </View>
       </Animated.View>
@@ -396,7 +375,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 8,
-    marginBottom: 32,
+    marginBottom: 40,
   },
   avatarContainer: {
     width: 40,
@@ -491,9 +470,6 @@ const styles = StyleSheet.create({
     gap: 14,
     backgroundColor: "rgba(239, 68, 68, 0.05)",
   },
-  menuItemIcon: {
-    fontSize: 22,
-  },
   menuItemText: {
     fontSize: 16,
     fontWeight: "700",
@@ -509,34 +485,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 48,
   },
-  iconContainer: {
-    width: 90,
-    height: 90,
-    borderRadius: 24,
-    backgroundColor: "rgba(99, 102, 241, 0.1)",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: "rgba(99, 102, 241, 0.2)",
-  },
-  iconEmoji: {
-    fontSize: 48,
-  },
   title: {
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: "800",
     color: "#FFFFFF",
-    marginBottom: 12,
+    marginBottom: 16,
     letterSpacing: -0.5,
     textAlign: "center",
   },
   subtitle: {
-    fontSize: 15,
+    fontSize: 16,
     color: "#94A3B8",
     textAlign: "center",
-    maxWidth: 320,
-    lineHeight: 22,
+    maxWidth: 340,
+    lineHeight: 24,
   },
   optionsContainer: {
     gap: 20,
@@ -570,9 +532,6 @@ const styles = StyleSheet.create({
   iconHighlight: {
     backgroundColor: "rgba(99, 102, 241, 0.15)",
   },
-  cardIcon: {
-    fontSize: 28,
-  },
   cardContent: {
     flex: 1,
   },
@@ -595,11 +554,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(99, 102, 241, 0.15)",
     justifyContent: "center",
     alignItems: "center",
-  },
-  arrowText: {
-    fontSize: 18,
-    color: "#6366F1",
-    fontWeight: "600",
   },
   dividerContainer: {
     flexDirection: "row",
@@ -625,11 +579,20 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: "rgba(59, 130, 246, 0.2)",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  footerIconContainer: {
+    width: 24,
+    height: 24,
+    justifyContent: "center",
+    alignItems: "center",
   },
   footerText: {
+    flex: 1,
     fontSize: 13,
     color: "#93C5FD",
-    textAlign: "center",
     lineHeight: 20,
   },
 });

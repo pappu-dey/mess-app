@@ -1,6 +1,6 @@
 // app/mess/create.tsx
 import { useRouter } from "expo-router";
-import { collection, doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -237,22 +237,36 @@ export default function CreateMess() {
         throw new Error("Failed to generate unique mess ID");
       }
 
+      // Fetch user data to get correct name
+      const userDocRef = doc(db, "users", user.uid);
+      const userDocSnap = await getDoc(userDocRef);
+      const userData = userDocSnap.exists() ? userDocSnap.data() : {};
+      const userName = userData.name || user.displayName || "Manager";
+
       // Create mess document in Firestore
       const messRef = doc(db, "messes", newMessId);
       await setDoc(messRef, {
         messId: newMessId,
         name: trimmedMessName,
         managerId: user.uid,
-        managerName: user.displayName || "Manager",
+        managerName: userName,
         createdAt: serverTimestamp(),
         members: [user.uid],
         memberCount: 1,
       });
 
+      // Add manager to the mess members subcollection
+      const memberRef = doc(db, "messes", newMessId, "members", user.uid);
+      await setDoc(memberRef, {
+        name: userName,
+        email: user.email,
+        role: "manager",
+        joinedAt: serverTimestamp(),
+      });
+
       // Update user document with mess info
-      const userRef = doc(db, "users", user.uid);
       await setDoc(
-        userRef,
+        userDocRef,
         {
           messId: newMessId,
           role: "manager",

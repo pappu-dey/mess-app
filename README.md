@@ -95,4 +95,5 @@ For questions or support, reach out to:
 
 - **Author**: Pappu Dey
 - **Email**: deypappu144@gmail.com
+- **Support**: xtpdev@gmail.com
 - **GitHub**: [pappu-dey](https://github.com/pappu-dey)

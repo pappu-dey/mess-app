@@ -1,9 +1,8 @@
 // app/mess/join.tsx
 import { useRouter } from "expo-router";
-import { doc, getDoc, setDoc, serverTimestamp, updateDoc, arrayUnion } from "firebase/firestore";
+import { arrayUnion, doc, getDoc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import { useEffect, useRef, useState } from "react";
 import {
-  Alert,
   Animated,
   Keyboard,
   KeyboardAvoidingView,
@@ -13,7 +12,7 @@ import {
   TextInput,
   TouchableOpacity,
   TouchableWithoutFeedback,
-  View,
+  View
 } from "react-native";
 import { auth, db } from "../../firebase/firebaseConfig";
 
@@ -210,14 +209,28 @@ export default function JoinMess() {
         return;
       }
 
-      // Add user to mess members
+      // Fetch user data for name
+      const userRef = doc(db, "users", user.uid);
+      const userDoc = await getDoc(userRef);
+      const userData = userDoc.exists() ? userDoc.data() : {};
+      const userName = userData.name || user.displayName || "Member";
+
+      // Add user to mess members array
       await updateDoc(messRef, {
         members: arrayUnion(user.uid),
         memberCount: (messData.memberCount || 0) + 1,
       });
 
+      // Add user to members subcollection
+      const memberRef = doc(db, "messes", messIdUpper, "members", user.uid);
+      await setDoc(memberRef, {
+        name: userName,
+        email: user.email,
+        role: "member",
+        joinedAt: serverTimestamp(),
+      });
+
       // Update user document with mess info
-      const userRef = doc(db, "users", user.uid);
       await setDoc(
         userRef,
         {

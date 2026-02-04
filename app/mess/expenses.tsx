@@ -1,20 +1,20 @@
 // Expenses.tsx
 import { format } from "date-fns";
+import { useLocalSearchParams } from "expo-router";
 import {
   addDoc,
   collection,
   deleteDoc,
   doc,
-  getDoc,
   increment,
   onSnapshot,
   query,
   serverTimestamp,
   setDoc,
   updateDoc,
-  where,
+  where
 } from "firebase/firestore";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -30,6 +30,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { useApp } from "../../context/AppContext";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../firebase/firebaseConfig";
 
@@ -58,10 +59,20 @@ type ExpenseItem = {
 
 export default function Expenses() {
   /* ================= CONTEXT ================= */
+  const params = useLocalSearchParams();
+  const { refreshDashboard } = useApp();
   const { user, activeMessId } = useAuth();
   const isManager = user?.role === "manager";
 
-  const monthId = useMemo(() => format(new Date(), "yyyy-MM"), []);
+  // Initialize selected month from URL parameter or default to current month
+  const getInitialMonth = () => {
+    if (params.month && typeof params.month === 'string') {
+      return params.month;
+    }
+    return format(new Date(), "yyyy-MM");
+  };
+
+  const [monthId, setMonthId] = useState(getInitialMonth());
 
   /* ================= STATE ================= */
   const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
@@ -99,19 +110,21 @@ export default function Expenses() {
     const q = query(expensesRef, where("type", "==", "expense"));
 
     const unsub = onSnapshot(q, async (snap) => {
-      const list: ExpenseItem[] = snap.docs.map((d) => {
-        const data = d.data();
-        return {
-          id: d.id,
-          amount: data.amount || 0,
-          purpose: data.purpose || "",
-          date: data.date || "",
-          isCommon: data.isCommon || false,
-          edited: data.edited ?? false,
-          createdAt: data.createdAt,
-          updatedAt: data.updatedAt,
-        };
-      });
+      const list: ExpenseItem[] = snap.docs
+        .map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            amount: data.amount || 0,
+            purpose: data.purpose || "",
+            date: data.date || "",
+            isCommon: data.isCommon || false,
+            edited: data.edited ?? false,
+            createdAt: data.createdAt,
+            updatedAt: data.updatedAt,
+          };
+        })
+        .filter((item) => item.amount > 0); // Hide guest meal adjustments (negative values)
 
       list.sort((a, b) => {
         if (!a.createdAt || !b.createdAt) return 0;
@@ -120,16 +133,13 @@ export default function Expenses() {
 
       setExpenses(list);
 
-      // Calculate total
+      // Calculate total from visible expenses only (Gross Expense)
       const total = list.reduce((sum, exp) => sum + exp.amount, 0);
       setTotalExpenses(total);
 
-      // Fetch month total from document
-      const monthSnap = await getDoc(monthRef);
-      if (monthSnap.exists()) {
-        const monthTotal = monthSnap.data().totalExpense || 0;
-        setTotalExpenses(monthTotal);
-      }
+      // We do NOT fetch totalExpense from monthRef anymore because that value
+      // is the "Net Expense" (Real - GuestAdjustments), but here we want
+      // to show the "Gross Expense" (sum of all positive bills).
 
       setLoading(false);
     });
@@ -184,6 +194,8 @@ export default function Expenses() {
       }
 
       closeModal();
+      // Refresh dashboard to show updated data instantly
+      refreshDashboard();
     } catch (e) {
       console.error(e);
       Alert.alert("Error", "Failed to save expense");
@@ -214,6 +226,8 @@ export default function Expenses() {
       await updateDoc(monthRef, { totalExpense: increment(-amt) });
       setShowActionMenu(false);
       setSelectedExpense(null);
+      // Refresh dashboard to show updated data instantly
+      refreshDashboard();
     } catch (e) {
       console.error(e);
       Alert.alert("Error", "Failed to delete expense");
@@ -252,6 +266,27 @@ export default function Expenses() {
     setSelectedDate(newDate);
   };
 
+  /* ================= MONTH NAVIGATION ================= */
+  const handleMonthChange = (direction: "prev" | "next") => {
+    const [year, month] = monthId.split("-").map(Number);
+    const date = new Date(year, month - 1);
+
+    if (direction === "next") {
+      date.setMonth(date.getMonth() + 1);
+    } else {
+      date.setMonth(date.getMonth() - 1);
+    }
+
+    const newMonthKey = format(date, "yyyy-MM");
+    setMonthId(newMonthKey);
+  };
+
+  const getMonthName = () => {
+    const [year, month] = monthId.split("-");
+    const date = new Date(parseInt(year), parseInt(month) - 1);
+    return date.toLocaleString("en-IN", { month: "long", year: "numeric" });
+  };
+
   /* ================= REFRESH ================= */
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -268,8 +303,27 @@ export default function Expenses() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.header}>Expenses</Text>
-      <Text style={styles.subHeader}>Track all your expenses</Text>
+      {/* Month Selector Header */}
+      <View style={styles.monthSelectorContainer}>
+        <TouchableOpacity
+          style={styles.monthNavButton}
+          onPress={() => handleMonthChange("prev")}
+        >
+          <Text style={styles.monthNavButtonText}>‹</Text>
+        </TouchableOpacity>
+
+        <View style={styles.monthDisplayContainer}>
+          <Text style={styles.header}>{getMonthName()}</Text>
+          <Text style={styles.subHeader}>Track all your expenses</Text>
+        </View>
+
+        <TouchableOpacity
+          style={styles.monthNavButton}
+          onPress={() => handleMonthChange("next")}
+        >
+          <Text style={styles.monthNavButtonText}>›</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Total Expenses Card */}
       <View style={styles.totalCard}>
@@ -288,10 +342,15 @@ export default function Expenses() {
         contentContainerStyle={{ paddingBottom: 100 }}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No expenses yet</Text>
+            <Text style={styles.emptyText}>No expenses for {getMonthName()}</Text>
             {isManager && (
               <Text style={styles.emptySubtext}>
-                Tap the + button to add your first expense
+                Tap the + button to add an expense for this month
+              </Text>
+            )}
+            {!isManager && (
+              <Text style={styles.emptySubtext}>
+                No expenses have been recorded for this mess and month yet
               </Text>
             )}
           </View>
@@ -530,6 +589,34 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   subHeader: { fontSize: 14, color: "#94A3B8", marginBottom: 20 },
+  monthSelectorContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 8,
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  monthNavButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#1E293B",
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#334155",
+  },
+  monthNavButtonText: {
+    fontSize: 28,
+    color: "#6366F1",
+    fontWeight: "700",
+  },
+  monthDisplayContainer: {
+    flex: 1,
+    alignItems: "center",
+    paddingHorizontal: 16,
+  },
 
   totalCard: {
     backgroundColor: "#1E293B",
@@ -638,7 +725,7 @@ const styles = StyleSheet.create({
 
   fab: {
     position: "absolute",
-    bottom: 24,
+    bottom: 50,
     right: 24,
     backgroundColor: "#6366F1",
     width: 64,
@@ -668,6 +755,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     maxHeight: "90%",
+    marginBottom: 48,
   },
   modalTitle: {
     color: "#FFF",

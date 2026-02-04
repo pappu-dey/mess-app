@@ -4,10 +4,8 @@ import * as Clipboard from "expo-clipboard";
 import {
   collection,
   doc,
-  getDoc,
   getDocs,
-  onSnapshot,
-  writeBatch,
+  writeBatch
 } from "firebase/firestore";
 import {
   Calendar,
@@ -46,298 +44,65 @@ import {
   View,
 } from "react-native";
 import LogoutModal from "../../components/LogoutModal";
+import { useApp } from "../../context/AppContext";
+import { useNetwork } from "../../context/NetworkContext";
 import { auth, db } from "../../firebase/firebaseConfig";
+
 
 export default function Dashboard() {
   const router = useRouter();
-  const [user, setUser] = useState<{
-    name: string;
-    email: string;
-    role: string;
-    uid: string;
-    joinedDate: string;
-  } | null>(null);
+  const { isOffline } = useNetwork();
+  const {
+    user,
+    mess,
+    members: contextMembers,
+    clearMessData,
+    dashboardData,
+    updateDashboardMonth
+  } = useApp();
+
   const [showProfile, setShowProfile] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteMessIdInput, setDeleteMessIdInput] = useState("");
-  const [messName, setMessName] = useState("");
-  const [messId, setMessId] = useState("");
-  const [messCreatedDate, setMessCreatedDate] = useState("");
+  const [networkError, setNetworkError] = useState<string | null>(null);
+  const [lastDataUpdate, setLastDataUpdate] = useState<Date | null>(null);
 
-  const [houseStats, setHouseStats] = useState({
+  // Use cached data from context
+  const houseStats = dashboardData.stats || {
     currentMonth: "January, 2026",
     totalMeal: 0.0,
     totalBazar: 0.0,
     costPerMeal: 0.0,
     remainingMoney: 0.0,
-  });
-  const [members, setMembers] = useState<any[]>([]);
-  const [notifications] = useState([
-    {
-      id: 1,
-      message: "New expense added: ₹2,450 for groceries",
-      timestamp: "2026-01-21 10:30 AM",
-    },
-    {
-      id: 2,
-      message: "Member deposited ₹5,000",
-      timestamp: "2026-01-20 04:15 PM",
-    },
-    {
-      id: 3,
-      message: "Monthly calculation completed",
-      timestamp: "2026-01-19 11:00 AM",
-    },
-    {
-      id: 4,
-      message: "New meal entry added",
-      timestamp: "2026-01-18 08:45 PM",
-    },
-  ]);
-  const [loading, setLoading] = useState(true);
-  const [calculatingStats, setCalculatingStats] = useState(false);
+    totalGuestMeal: 0.0,
+  };
+  const memberStats = dashboardData.memberStats;
+  const notifications = dashboardData.notifications;
+  const selectedMonth = dashboardData.selectedMonth;
+
+  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
-  const [selectedMonth, setSelectedMonth] = useState(new Date());
+
 
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(20)).current;
 
-  // Prevent race conditions
-  const calculationInProgress = useRef(false);
-  const lastCalculationTime = useRef(0);
-
-  const calculateMonthlyStats = useCallback(
-    async (messId: string, date: Date) => {
-      // Debounce rapid calculations
-      const now = Date.now();
-      if (
-        calculationInProgress.current ||
-        now - lastCalculationTime.current < 500
-      ) {
-        console.log("Skipping duplicate calculation");
-        return;
-      }
-
-      calculationInProgress.current = true;
-      lastCalculationTime.current = now;
-      setCalculatingStats(true);
-
-      const monthKey = `${date.getFullYear()}-${(date.getMonth() + 1)
-        .toString()
-        .padStart(2, "0")}`;
-
-      try {
-        console.log("=== STARTING CALCULATION ===");
-        console.log("Month Key:", monthKey);
-        console.log("Mess ID:", messId);
-
-        // Parallel fetch for better performance
-        const [mealsSnap, transactionsSnap, membersSnap] = await Promise.all([
-          getDocs(
-            collection(db, "messes", messId, "meals", monthKey, "entries"),
-          ),
-          getDocs(
-            collection(
-              db,
-              "messes",
-              messId,
-              "managerMoney",
-              monthKey,
-              "entries",
-            ),
-          ),
-          getDocs(collection(db, "messes", messId, "members")),
-        ]);
-
-        console.log("=== DOCUMENTS FETCHED ===");
-        console.log("Meals docs:", mealsSnap.size);
-        console.log("Transactions docs:", transactionsSnap.size);
-        console.log("Members docs:", membersSnap.size);
-
-        const totalMembers = membersSnap.size;
-
-        // Calculate total meals per member
-        const memberMeals: Record<string, { name: string; count: number }> = {};
-
-        console.log("\n=== PROCESSING MEALS ===");
-        mealsSnap.forEach((d) => {
-          const data = d.data();
-          console.log("Meal entry:", {
-            id: d.id,
-            memberId: data.memberId,
-            memberName: data.memberName,
-            breakfast: data.breakfast,
-            lunch: data.lunch,
-            dinner: data.dinner,
-          });
-
-          const mealCount =
-            (Number(data.breakfast) || 0) +
-            (Number(data.lunch) || 0) +
-            (Number(data.dinner) || 0);
-
-          if (!memberMeals[data.memberId]) {
-            memberMeals[data.memberId] = { name: data.memberName, count: 0 };
-          }
-          memberMeals[data.memberId].count += mealCount;
-        });
-
-        console.log("Member meals summary:", memberMeals);
-
-        // Calculate total meals
-        const totalMeal = Object.values(memberMeals).reduce(
-          (sum, m) => sum + m.count,
-          0,
-        );
-
-        console.log("Total meals calculated:", totalMeal);
-
-        // Process transactions - separate deposits and expenses
-        let totalCommonExpense = 0;
-        let totalIndividualExpense = 0;
-        const memberDeposits: Record<string, number> = {};
-
-        console.log("\n=== PROCESSING TRANSACTIONS ===");
-        transactionsSnap.forEach((d) => {
-          const data = d.data();
-          const amount = Number(data.amount || 0);
-          const type = data.type;
-
-          console.log("Transaction entry:", {
-            id: d.id,
-            type: type,
-            amount: amount,
-            isCommon: data.isCommon,
-            memberId: data.memberId,
-            memberName: data.memberName,
-            description: data.description || data.item || data.purpose,
-          });
-
-          if (type === "deposit") {
-            // Handle deposits
-            memberDeposits[data.memberId] =
-              (memberDeposits[data.memberId] || 0) + amount;
-          } else if (type === "expense") {
-            // Handle expenses
-            if (data.isCommon === true) {
-              totalCommonExpense += amount;
-            } else {
-              totalIndividualExpense += amount;
-            }
-          }
-        });
-
-        console.log("\n=== EXPENSE BREAKDOWN ===");
-        console.log("Total Common Expense:", totalCommonExpense);
-        console.log("Total Individual Expense:", totalIndividualExpense);
-
-        const grandTotalExpense = totalCommonExpense + totalIndividualExpense;
-        console.log("Grand Total Expense:", grandTotalExpense);
-
-        // Calculate deposits
-        console.log("\n=== DEPOSIT BREAKDOWN ===");
-        console.log("Member deposits summary:", memberDeposits);
-
-        const totalDeposit = Object.values(memberDeposits).reduce(
-          (sum, amount) => sum + amount,
-          0,
-        );
-
-        console.log("Total deposits calculated:", totalDeposit);
-
-        // Calculate common charge per member
-        const commonChargePerMember =
-          totalMembers > 0 ? totalCommonExpense / totalMembers : 0;
-
-        console.log("\n=== PER-MEMBER CALCULATIONS ===");
-        console.log("Common charge per member:", commonChargePerMember);
-
-        // Calculate cost per meal (only from individual expenses)
-        const costPerMeal =
-          totalMeal > 0 ? totalIndividualExpense / totalMeal : 0;
-
-        console.log("Cost per meal:", costPerMeal);
-        console.log("Remaining money:", totalDeposit - grandTotalExpense);
-
-        // Build member statistics
-        const membersArray: any[] = [];
-
-        console.log("\n=== BUILDING MEMBER STATS ===");
-        membersSnap.forEach((memberDoc) => {
-          const memberId = memberDoc.id;
-          const memberData = memberDoc.data();
-
-          const mealCount = memberMeals[memberId]?.count || 0;
-          const deposit = memberDeposits[memberId] || 0;
-          const mealCost = mealCount * costPerMeal;
-          const totalCost = commonChargePerMember + mealCost;
-          const balance = deposit - totalCost;
-
-          console.log(`Member: ${memberData.name}`, {
-            mealCount,
-            deposit,
-            commonCharge: commonChargePerMember,
-            mealCost,
-            totalCost,
-            balance,
-          });
-
-          membersArray.push({
-            id: memberId,
-            name: memberData.name || "Unknown",
-            meal: mealCount,
-            deposit: deposit,
-            commonCharge: commonChargePerMember,
-            mealCost: mealCost,
-            totalCost: totalCost,
-            balance: balance,
-          });
-        });
-
-        // Sort members by name
-        membersArray.sort((a, b) => a.name.localeCompare(b.name));
-
-        const finalStats = {
-          currentMonth: date.toLocaleString("default", {
-            month: "long",
-            year: "numeric",
-          }),
-          totalMeal,
-          totalBazar: grandTotalExpense,
-          costPerMeal,
-          remainingMoney: totalDeposit - grandTotalExpense,
-        };
-
-        console.log("\n=== FINAL STATS TO DISPLAY ===");
-        console.log(finalStats);
-        console.log("=== CALCULATION COMPLETE ===\n");
-
-        setHouseStats(finalStats);
-        setMembers(membersArray);
-      } catch (error) {
-        console.error("❌ ERROR in calculation:", error);
-        Alert.alert(
-          "Error",
-          "Failed to calculate statistics. Please try again.",
-        );
-      } finally {
-        calculationInProgress.current = false;
-        setCalculatingStats(false);
-      }
-    },
-    [],
-  );
+  // Note: Dashboard data (stats, memberStats, notifications) is now managed
+  // centrally in AppContext via preloadDashboardData and updateDashboardMonth
 
   useEffect(() => {
-    fetchDashboardData();
+    if (!mess?.id) {
+      setLoading(false);
+      return;
+    }
 
-    // Animate dashboard entrance
+    // Data is already preloaded from AppContext, just animate entrance
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
@@ -350,135 +115,35 @@ export default function Dashboard() {
         useNativeDriver: true,
       }),
     ]).start();
-  }, []);
 
-  // Real-time listener for data changes
-  useEffect(() => {
-    if (!messId) return;
+    setLoading(false);
+  }, [mess?.id]);
 
-    const monthKey = `${selectedMonth.getFullYear()}-${(
-      selectedMonth.getMonth() + 1
-    )
-      .toString()
-      .padStart(2, "0")}`;
+  // Note: Real-time listeners removed to prevent infinite re-render loop.
+  // Data is managed by AppContext. Users can pull-to-refresh for updates.
 
-    console.log("Setting up real-time listeners for:", monthKey);
 
-    // Debounced recalculation function
-    let recalculateTimeout: ReturnType<typeof setTimeout>;
-    const debouncedRecalculate = () => {
-      clearTimeout(recalculateTimeout);
-      recalculateTimeout = setTimeout(() => {
-        calculateMonthlyStats(messId, selectedMonth);
-      }, 300);
-    };
-
-    // Listen to meals changes
-    const unsubscribeMeals = onSnapshot(
-      collection(db, "messes", messId, "meals", monthKey, "entries"),
-      () => {
-        console.log("Meals data changed");
-        debouncedRecalculate();
-      },
-      (error) => console.error("Meals listener error:", error),
-    );
-
-    // Listen to transactions (deposits + expenses) changes
-    const unsubscribeTransactions = onSnapshot(
-      collection(db, "messes", messId, "managerMoney", monthKey, "entries"),
-      () => {
-        console.log("Transactions data changed (deposits/expenses)");
-        debouncedRecalculate();
-      },
-      (error) => console.error("Transactions listener error:", error),
-    );
-
-    // Listen to members changes
-    const unsubscribeMembers = onSnapshot(
-      collection(db, "messes", messId, "members"),
-      () => {
-        console.log("Members data changed");
-        debouncedRecalculate();
-      },
-      (error) => console.error("Members listener error:", error),
-    );
-
-    // Cleanup listeners when component unmounts or dependencies change
-    return () => {
-      clearTimeout(recalculateTimeout);
-      unsubscribeMeals();
-      unsubscribeTransactions();
-      unsubscribeMembers();
-      console.log("Cleaned up listeners");
-    };
-  }, [messId, selectedMonth, calculateMonthlyStats]);
-
-  const fetchDashboardData = async () => {
-    try {
-      const currentUser = auth.currentUser;
-      if (!currentUser) {
-        router.replace("/auth/login");
-        return;
-      }
-
-      const userDoc = await getDoc(doc(db, "users", currentUser.uid));
-      if (userDoc.exists()) {
-        const userData = userDoc.data();
-        setUser({
-          name: userData.name || "User",
-          email: userData.email || currentUser.email || "",
-          role: userData.role || "member",
-          uid: currentUser.uid,
-          joinedDate:
-            userData.createdAt?.toDate().toISOString() ||
-            new Date().toISOString(),
-        });
-
-        if (userData.messId) {
-          setMessId(userData.messId);
-          const messDoc = await getDoc(doc(db, "messes", userData.messId));
-          if (messDoc.exists()) {
-            const messData = messDoc.data();
-            setMessName(messData.name || "Mess");
-            setMessCreatedDate(
-              messData.createdAt?.toDate().toISOString() ||
-                new Date().toISOString(),
-            );
-
-            // Load current month stats
-            await calculateMonthlyStats(userData.messId, selectedMonth);
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Error fetching dashboard data:", error);
-      Alert.alert("Error", "Failed to load dashboard data");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await fetchDashboardData();
+      if (mess?.id && contextMembers.length > 0) {
+        await updateDashboardMonth(selectedMonth);
+      }
     } finally {
       setRefreshing(false);
     }
-  }, [messId, selectedMonth]);
+  }, [mess?.id, selectedMonth, updateDashboardMonth, contextMembers.length]);
 
   const handleMonthChange = useCallback(
-    (direction: "prev" | "next") => {
+    async (direction: "prev" | "next") => {
       const newMonth = new Date(
         selectedMonth.getFullYear(),
         selectedMonth.getMonth() + (direction === "next" ? 1 : -1),
       );
-      setSelectedMonth(newMonth);
-      if (messId) {
-        calculateMonthlyStats(messId, newMonth);
-      }
+      await updateDashboardMonth(newMonth);
     },
-    [selectedMonth, messId, calculateMonthlyStats],
+    [selectedMonth, updateDashboardMonth],
   );
 
   const handleLogout = async () => {
@@ -511,50 +176,33 @@ export default function Dashboard() {
         onPress: async () => {
           try {
             const currentUser = auth.currentUser;
-            if (!currentUser) return;
+            if (!currentUser || !mess?.id) return;
 
             const { updateDoc, serverTimestamp, deleteDoc } =
               await import("firebase/firestore");
             const userRef = doc(db, "users", currentUser.uid);
-            const userDoc = await getDoc(userRef);
 
-            if (userDoc.exists()) {
-              const userData = userDoc.data();
-              if (userData.messId) {
-                const messRef = doc(db, "messes", userData.messId);
-                const messDoc = await getDoc(messRef);
+            // Remove user from mess
+            await updateDoc(userRef, {
+              messId: null,
+              role: null,
+              updatedAt: serverTimestamp(),
+            });
 
-                if (messDoc.exists()) {
-                  const messData = messDoc.data();
-                  const updatedMembers = (messData.members || []).filter(
-                    (uid: string) => uid !== currentUser.uid,
-                  );
+            // Delete member document
+            const memberRef = doc(
+              db,
+              "messes",
+              mess.id,
+              "members",
+              currentUser.uid,
+            );
+            await deleteDoc(memberRef);
 
-                  await updateDoc(messRef, {
-                    members: updatedMembers,
-                    memberCount: updatedMembers.length,
-                  });
+            // Clear mess data from context
+            clearMessData();
 
-                  // Delete member document
-                  const memberRef = doc(
-                    db,
-                    "messes",
-                    userData.messId,
-                    "members",
-                    currentUser.uid,
-                  );
-                  await deleteDoc(memberRef);
-                }
-
-                await updateDoc(userRef, {
-                  messId: null,
-                  role: null,
-                  updatedAt: serverTimestamp(),
-                });
-
-                router.replace("/mess/select");
-              }
-            }
+            router.replace("/mess/select");
           } catch (error) {
             console.error("Error exiting mess:", error);
             Alert.alert("Error", "Failed to exit mess");
@@ -584,6 +232,11 @@ export default function Dashboard() {
 
     if (action === "Meal Entry") {
       router.push("/mess/meals");
+      return;
+    }
+
+    if (action === "Add Guest Meal") {
+      router.push("/mess/guestmeal");
       return;
     }
   };
@@ -661,7 +314,7 @@ export default function Dashboard() {
   };
 
   const confirmDeleteMess = async () => {
-    if (deleteMessIdInput.trim() !== messId) {
+    if (deleteMessIdInput.trim() !== mess?.id) {
       Alert.alert(
         "Invalid Mess ID",
         "The Mess ID you entered does not match. Please try again.",
@@ -677,7 +330,7 @@ export default function Dashboard() {
 
       // Delete all member documents
       const membersSnap = await getDocs(
-        collection(db, "messes", messId, "members"),
+        collection(db, "messes", mess?.id, "members"),
       );
       membersSnap.forEach((doc) => {
         batch.delete(doc.ref);
@@ -687,13 +340,13 @@ export default function Dashboard() {
       const usersSnap = await getDocs(collection(db, "users"));
       usersSnap.forEach((userDoc) => {
         const userData = userDoc.data();
-        if (userData.messId === messId) {
+        if (userData.messId === mess?.id) {
           batch.update(userDoc.ref, { messId: null, role: null });
         }
       });
 
       // Delete the mess document
-      batch.delete(doc(db, "messes", messId));
+      batch.delete(doc(db, "messes", mess?.id));
 
       await batch.commit();
 
@@ -714,12 +367,12 @@ export default function Dashboard() {
     setTimeout(() => {
       Alert.alert(
         "Share Mess Invitation",
-        `Share this information with others to invite them to your mess:\n\n📋 Mess ID: ${messId}\n🏠 Mess Name: ${messName}\n\nThey can use this ID to join your mess from the app.`,
+        `Share this information with others to invite them to your mess:\n\n📋 Mess ID: ${mess?.id}\n🏠 Mess Name: ${mess?.name}\n\nThey can use this ID to join your mess from the app.`,
         [
           {
             text: "Copy Mess ID",
             onPress: () => {
-              Clipboard.setString(messId);
+              Clipboard.setString(mess?.id || "");
               Alert.alert("Copied!", "Mess ID has been copied to clipboard");
             },
           },
@@ -729,14 +382,7 @@ export default function Dashboard() {
     }, 300);
   };
 
-  if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#6366F1" />
-        <Text style={styles.loadingText}>Loading dashboard...</Text>
-      </View>
-    );
-  }
+  // Removed skeleton loading screen for faster load times
 
   if (!user) {
     return (
@@ -795,6 +441,41 @@ export default function Dashboard() {
           </View>
         </View>
       </Animated.View>
+
+      {/* Offline Indicator */}
+      {(isOffline || networkError) && (
+        <View style={styles.offlineIndicator}>
+          <View style={styles.offlineContent}>
+            <Text style={styles.offlineIcon}>
+              {isOffline ? "📡" : "⚠️"}
+            </Text>
+            <View style={styles.offlineTextContainer}>
+              <Text style={styles.offlineText}>
+                {networkError || "No internet connection"}
+              </Text>
+              {lastDataUpdate && (
+                <Text style={styles.offlineSubtext}>
+                  Last updated: {lastDataUpdate.toLocaleTimeString("en-IN", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </Text>
+              )}
+            </View>
+          </View>
+          {isOffline && (
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={() => {
+                setNetworkError(null);
+                if (mess?.id) updateDashboardMonth(selectedMonth);
+              }}
+            >
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
 
       {/* Profile Modal */}
       {/* Profile Modal */}
@@ -978,19 +659,64 @@ export default function Dashboard() {
 
             {/* Notifications list */}
             <ScrollView style={styles.notificationsList}>
-              {notifications
-                .slice(-4) // get last 4 notifications
-                .reverse() // show newest first
-                .map((notif) => (
-                  <View key={notif.id} style={styles.notificationItem}>
-                    <Text style={styles.notificationMessage}>
-                      {notif.message}
-                    </Text>
-                    <Text style={styles.notificationTime}>
-                      {notif.timestamp}
-                    </Text>
-                  </View>
-                ))}
+              {notifications.length === 0 ? (
+                <View style={styles.emptyNotifications}>
+                  <Text style={styles.emptyNotificationsText}>
+                    No notifications yet
+                  </Text>
+                  <Text style={styles.emptyNotificationsSubtext}>
+                    Activity will appear here
+                  </Text>
+                </View>
+              ) : (
+                notifications
+                  .slice(0, 4) // get first 4 notifications (already sorted newest first)
+                  .map((notif) => {
+                    // Determine icon and color based on notification type
+                    let IconComponent;
+                    let iconColor;
+                    let iconBgColor;
+
+                    if (notif.type === "member_joined") {
+                      IconComponent = UserPlus;
+                      iconColor = "#10B981";
+                      iconBgColor = "rgba(16, 185, 129, 0.15)";
+                    } else if (notif.type === "deposit") {
+                      IconComponent = Wallet;
+                      iconColor = "#3B82F6";
+                      iconBgColor = "rgba(59, 130, 246, 0.15)";
+                    } else {
+                      IconComponent = ShoppingCart;
+                      iconColor = "#EF4444";
+                      iconBgColor = "rgba(239, 68, 68, 0.15)";
+                    }
+
+                    return (
+                      <View key={notif.id} style={styles.notificationItem}>
+                        <View
+                          style={[
+                            styles.notificationIcon,
+                            { backgroundColor: iconBgColor },
+                          ]}
+                        >
+                          <IconComponent
+                            size={20}
+                            color={iconColor}
+                            strokeWidth={2.5}
+                          />
+                        </View>
+                        <View style={styles.notificationContent}>
+                          <Text style={styles.notificationMessage}>
+                            {notif.message}
+                          </Text>
+                          <Text style={styles.notificationTime}>
+                            {notif.timestamp}
+                          </Text>
+                        </View>
+                      </View>
+                    );
+                  })
+              )}
             </ScrollView>
 
             {/* View More button */}
@@ -1137,7 +863,7 @@ export default function Dashboard() {
             </Text>
 
             <View style={styles.messIdDisplayBox}>
-              <Text style={styles.messIdDisplayText}>{messId}</Text>
+              <Text style={styles.messIdDisplayText}>{mess?.id}</Text>
             </View>
 
             <TextInput
@@ -1164,11 +890,11 @@ export default function Dashboard() {
                 style={[
                   styles.modalButton,
                   styles.modalButtonDanger,
-                  deleteMessIdInput.trim() !== messId &&
-                    styles.modalButtonDisabled,
+                  deleteMessIdInput.trim() !== mess?.id &&
+                  styles.modalButtonDisabled,
                 ]}
                 onPress={confirmDeleteMess}
-                disabled={deleteMessIdInput.trim() !== messId}
+                disabled={deleteMessIdInput.trim() !== mess?.id}
               >
                 <Text style={styles.modalButtonText}>Delete Forever</Text>
               </TouchableOpacity>
@@ -1203,12 +929,12 @@ export default function Dashboard() {
             <View style={styles.messInfoHeader}>
               <View style={styles.messInfoLeft}>
                 <Text style={styles.messInfoTitle}>
-                  {messName || "Your Mess"}
+                  {mess?.name || "Your Mess"}
                 </Text>
-                <Text style={styles.messInfoId}>ID: {messId || "N/A"}</Text>
+                <Text style={styles.messInfoId}>ID: {mess?.id || "N/A"}</Text>
                 <Text style={styles.messInfoDate}>
                   Created:{" "}
-                  {messCreatedDate ? formatDate(messCreatedDate) : "N/A"}
+                  {mess?.createdAt ? formatDate(mess.createdAt) : "N/A"}
                 </Text>
               </View>
               <TouchableOpacity
@@ -1225,7 +951,7 @@ export default function Dashboard() {
             <TouchableOpacity
               style={styles.monthButton}
               onPress={() => handleMonthChange("prev")}
-              disabled={calculatingStats}
+              disabled={dashboardData.loading}
             >
               <Text style={styles.monthButtonText}>‹</Text>
             </TouchableOpacity>
@@ -1237,7 +963,7 @@ export default function Dashboard() {
                   year: "numeric",
                 })}
               </Text>
-              {calculatingStats && (
+              {dashboardData.loading && (
                 <ActivityIndicator
                   size="small"
                   color="#6366F1"
@@ -1249,7 +975,7 @@ export default function Dashboard() {
             <TouchableOpacity
               style={styles.monthButton}
               onPress={() => handleMonthChange("next")}
-              disabled={calculatingStats}
+              disabled={dashboardData.loading}
             >
               <Text style={styles.monthButtonText}>›</Text>
             </TouchableOpacity>
@@ -1272,11 +998,13 @@ export default function Dashboard() {
             </View>
 
             {/* Cost Per Meal */}
+            {/* Cost Per Meal */}
             <View style={[styles.statCard, styles.statCardPurple]}>
               <Text style={styles.statLabel}>Cost Per Meal</Text>
               <Text style={styles.statValue}>
-                ₹{houseStats.costPerMeal.toFixed(2)}
+                ₹{(houseStats?.costPerMeal ?? 0).toFixed(2)}
               </Text>
+
             </View>
 
             {/* Remaining Money */}
@@ -1299,7 +1027,7 @@ export default function Dashboard() {
               {/* Deposit History */}
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonGreen]}
-                onPress={() => router.push("/mess/deposits")} // view only
+                onPress={() => router.push(`/mess/deposits?month=${selectedMonth.toISOString()}`)}
                 activeOpacity={0.75}
               >
                 <Wallet size={22} color="#fff" />
@@ -1312,7 +1040,7 @@ export default function Dashboard() {
               {/* Expense History */}
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonRed]}
-                onPress={() => router.push("/mess/expenses")} // view only
+                onPress={() => router.push(`/mess/expenses?month=${selectedMonth.toISOString()}`)}
                 activeOpacity={0.75}
               >
                 <Receipt size={22} color="#fff" />
@@ -1325,7 +1053,7 @@ export default function Dashboard() {
               {/* Meal History */}
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonBlue]}
-                onPress={() => router.push("/mess/meals")} // view only
+                onPress={() => router.push(`/mess/meals?month=${selectedMonth.toISOString()}`)}
                 activeOpacity={0.75}
               >
                 <UtensilsCrossed size={22} color="#fff" />
@@ -1355,11 +1083,11 @@ export default function Dashboard() {
             <View style={styles.membersHeader}>
               <Text style={styles.membersHeaderTitle}>Member Statistics</Text>
               <Text style={styles.membersCount}>
-                Total: {members.length || 0}
+                Total: {memberStats.length || 0}
               </Text>
             </View>
 
-            {members.length === 0 ? (
+            {memberStats.length === 0 ? (
               <View style={styles.emptyState}>
                 <Text style={styles.emptyStateText}>
                   No members yet. Start adding entries to see statistics!
@@ -1382,6 +1110,9 @@ export default function Dashboard() {
                       Common
                     </Text>
                     <Text style={[styles.tableHeaderText, { width: 90 }]}>
+                      Guest Meal
+                    </Text>
+                    <Text style={[styles.tableHeaderText, { width: 90 }]}>
                       Meal Cost
                     </Text>
                     <Text style={[styles.tableHeaderText, { width: 90 }]}>
@@ -1391,7 +1122,7 @@ export default function Dashboard() {
                       Balance
                     </Text>
                   </View>
-                  {members.map((member) => (
+                  {memberStats.map((member: any) => (
                     <View key={member.id} style={styles.tableRow}>
                       <Text
                         style={[styles.tableCell, { width: 120 }]}
@@ -1407,6 +1138,9 @@ export default function Dashboard() {
                       </Text>
                       <Text style={[styles.tableCell, { width: 90 }]}>
                         ₹{member.commonCharge.toFixed(1)}
+                      </Text>
+                      <Text style={[styles.tableCell, { width: 90 }]}>
+                        ₹{(member.guestMealCost || 0).toFixed(1)}
                       </Text>
                       <Text style={[styles.tableCell, { width: 90 }]}>
                         ₹{member.mealCost.toFixed(1)}
@@ -1488,28 +1222,15 @@ export default function Dashboard() {
               <Text style={styles.actionMenuText}>Meal Entry</Text>
             </TouchableOpacity>
 
-            {/* Add Guest Meal – Coming Soon */}
+            {/* Add Guest Meal */}
             <TouchableOpacity
               style={styles.actionMenuItem}
-              activeOpacity={0.7}
-              onPress={() =>
-                Alert.alert(
-                  "Coming Soon",
-                  "Guest meal feature is under development and will be available soon.",
-                )
-              }
+              onPress={() => handleAction("Add Guest Meal")}
             >
               <View style={styles.actionMenuIcon}>
-                <UsersRound size={18} color="#9CA3AF" />
+                <UsersRound size={18} color="#10B981" />
               </View>
-
-              <View style={{ flex: 1 }}>
-                <Text style={styles.actionMenuText}>Add Guest Meal</Text>
-                <View style={styles.comingSoonBadge}>
-                  <Clock size={10} color="#9CA3AF" />
-                  <Text style={styles.comingSoonText}>Coming Soon</Text>
-                </View>
-              </View>
+              <Text style={styles.actionMenuText}>Add Guest Meal</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1534,6 +1255,7 @@ export default function Dashboard() {
         onExitMess={handleExitMess}
         showExitMess={true}
       />
+
     </View>
   );
 }
@@ -1930,6 +1652,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 8,
     width: 280,
+    marginBottom: 48,
     borderWidth: 1,
     borderColor: "rgba(99, 102, 241, 0.3)",
     shadowColor: "#000",
@@ -1965,7 +1688,7 @@ const styles = StyleSheet.create({
   },
   fab: {
     position: "absolute",
-    bottom: 32,
+    bottom: 50,
     alignSelf: "center",
     width: 64,
     height: 64,
@@ -2000,48 +1723,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#6366F1",
   },
 
-  notificationsModal: {
-    maxHeight: "70%",
-  },
-  notificationsHeader: {
-    backgroundColor: "#6366F1",
-    marginHorizontal: -20,
-    marginTop: -20,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    marginBottom: 16,
-  },
-  notificationsList: {
-    maxHeight: 300,
-  },
-  notificationItem: {
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(71, 85, 105, 0.3)",
-  },
-  notificationMessage: {
-    color: "#E2E8F0",
-    fontSize: 13,
-    marginBottom: 4,
-  },
-  notificationTime: {
-    color: "#94A3B8",
-    fontSize: 11,
-  },
-  viewMoreButton: {
-    backgroundColor: "#6366F1",
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: "center",
-    marginTop: 16,
-  },
-  viewMoreButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: 14,
-  },
   settingsModal: {
     paddingVertical: 0,
   },
@@ -2174,6 +1855,7 @@ const styles = StyleSheet.create({
     padding: 24,
     width: "90%",
     maxWidth: 400,
+    marginBottom: 48,
     borderWidth: 1,
     borderColor: "#334155",
     shadowColor: "#000",
@@ -2331,6 +2013,127 @@ const styles = StyleSheet.create({
   roleBadgeText: {
     color: "#FFF",
     fontSize: 11,
+    fontWeight: "700",
+  },
+  // Offline indicator styles
+  offlineIndicator: {
+    backgroundColor: "#DC2626",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  offlineContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+  },
+  offlineIcon: {
+    fontSize: 20,
+    marginRight: 12,
+  },
+  offlineTextContainer: {
+    flex: 1,
+  },
+  offlineText: {
+    color: "#FFF",
+    fontSize: 14,
+    fontWeight: "600",
+    marginBottom: 2,
+  },
+  offlineSubtext: {
+    color: "#FEE2E2",
+    fontSize: 11,
+    fontWeight: "500",
+  },
+  retryButton: {
+    backgroundColor: "#FFF",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginLeft: 12,
+  },
+  retryButtonText: {
+    color: "#DC2626",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  // Notifications modal styles
+  notificationsModal: {
+    maxHeight: "70%",
+  },
+  notificationsHeader: {
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#334155",
+  },
+  notificationsList: {
+    maxHeight: 400,
+  },
+  notificationItem: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#334155",
+    gap: 12,
+  },
+  notificationIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  notificationContent: {
+    flex: 1,
+  },
+  notificationMessage: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "600",
+    marginBottom: 4,
+    lineHeight: 20,
+  },
+  notificationTime: {
+    color: "#94A3B8",
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  emptyNotifications: {
+    padding: 40,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  emptyNotificationsText: {
+    color: "#94A3B8",
+    fontSize: 16,
+    fontWeight: "600",
+    marginBottom: 4,
+  },
+  emptyNotificationsSubtext: {
+    color: "#64748B",
+    fontSize: 13,
+  },
+  viewMoreButton: {
+    backgroundColor: "#6366F1",
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    marginTop: 16,
+  },
+  viewMoreButtonText: {
+    color: "#FFFFFF",
+    fontSize: 15,
     fontWeight: "700",
   },
 });

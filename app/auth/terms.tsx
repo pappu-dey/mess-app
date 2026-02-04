@@ -1,5 +1,5 @@
 import { useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
   Animated,
   ScrollView,
@@ -137,7 +137,7 @@ export default function TermsOfService() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>11. Contact Information</Text>
             <Text style={styles.sectionText}>
-              If you have any questions about these Terms of Service, please contact us through the app or at support@messmanager.com
+              If you have any questions about these Terms of Service, please contact us through the app or at xtpdev@gmail.com
             </Text>
           </View>
         </ScrollView>

@@ -1,5 +1,5 @@
 import { format } from "date-fns";
-import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
+import { collection, getDocs, onSnapshot, orderBy, query } from "firebase/firestore";
 import {
   BellOff,
   Clock,
@@ -7,6 +7,7 @@ import {
   Edit3,
   Home,
   Inbox,
+  UserPlus,
   UtensilsCrossed,
   Wallet
 } from "lucide-react-native";
@@ -26,7 +27,7 @@ import { db } from "../../firebase/firebaseConfig";
 type NotificationItem = {
   id: string;
   amount: number;
-  type: "expense" | "deposit" | "adjustment";
+  type: "expense" | "deposit" | "adjustment" | "member_joined";
   date: string;
   createdAt: any;
   updatedAt?: any;
@@ -69,12 +70,15 @@ export default function Notifications() {
       "entries",
     );
 
+    const membersRef = collection(db, "messes", activeMessId, "members");
+
     const q = query(entriesRef, orderBy("createdAt", "desc"));
 
-    const unsub = onSnapshot(
+    // Listen to transactions
+    const unsubTransactions = onSnapshot(
       q,
-      (snap) => {
-        const list: NotificationItem[] = snap.docs.map((doc) => {
+      async (snap) => {
+        const transactionList: NotificationItem[] = snap.docs.map((doc) => {
           const data = doc.data();
           return {
             id: doc.id,
@@ -93,7 +97,34 @@ export default function Notifications() {
           };
         });
 
-        setNotifications(list);
+        // Fetch member joins
+        const membersSnap = await getDocs(membersRef);
+        const memberJoinList: NotificationItem[] = [];
+
+        membersSnap.forEach((doc) => {
+          const data = doc.data();
+          if (data.joinedAt) {
+            memberJoinList.push({
+              id: `member_${doc.id}`,
+              amount: 0,
+              type: "member_joined",
+              date: "",
+              createdAt: data.joinedAt,
+              memberName: data.name,
+              memberId: doc.id,
+            });
+          }
+        });
+
+        // Combine and sort all notifications
+        const allNotifications = [...transactionList, ...memberJoinList].sort(
+          (a, b) => {
+            if (!a.createdAt || !b.createdAt) return 0;
+            return b.createdAt.toMillis() - a.createdAt.toMillis();
+          }
+        );
+
+        setNotifications(allNotifications);
         setLoading(false);
         setRefreshing(false);
       },
@@ -104,7 +135,7 @@ export default function Notifications() {
       },
     );
 
-    return unsub;
+    return unsubTransactions;
   };
 
   const onRefresh = () => {
@@ -121,6 +152,9 @@ export default function Notifications() {
     }
     if (item.type === "deposit") {
       return `${item.memberName || "Member"} made a deposit`;
+    }
+    if (item.type === "member_joined") {
+      return `${item.memberName || "New member"} joined the mess`;
     }
     return "Balance Adjustment";
   };
@@ -146,6 +180,8 @@ export default function Notifications() {
       if (item.purpose) {
         parts.push(`• ${item.purpose}`);
       }
+    } else if (item.type === "member_joined") {
+      parts.push("Welcome to the mess family! 🎉");
     }
 
     return parts.join("\n");
@@ -158,12 +194,16 @@ export default function Notifications() {
     if (type === "deposit") {
       return Wallet;
     }
+    if (type === "member_joined") {
+      return UserPlus;
+    }
     return DollarSign;
   };
 
   const getColor = (type: NotificationItem["type"]) => {
     if (type === "expense") return "#EF4444";
     if (type === "deposit") return "#10B981";
+    if (type === "member_joined") return "#6366F1";
     return "#F59E0B";
   };
 
@@ -233,6 +273,7 @@ export default function Notifications() {
         renderItem={({ item }) => {
           const IconComponent = getIcon(item.type, item.isCommon);
           const iconColor = getColor(item.type);
+          const showAmount = item.type !== "member_joined";
 
           return (
             <View style={styles.card}>
@@ -272,10 +313,12 @@ export default function Notifications() {
                         </Text>
                       </View>
                     )}
-                    <Text style={[styles.amount, { color: iconColor }]}>
-                      {item.type === "deposit" ? "+" : "-"}₹
-                      {item.amount.toFixed(2)}
-                    </Text>
+                    {showAmount && (
+                      <Text style={[styles.amount, { color: iconColor }]}>
+                        {item.type === "deposit" ? "+" : "-"}₹
+                        {item.amount.toFixed(2)}
+                      </Text>
+                    )}
                   </View>
 
                   {item.isEdited && item.updatedAt && (

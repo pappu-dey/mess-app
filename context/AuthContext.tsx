@@ -12,6 +12,7 @@ export type User = {
   email: string;
   role: Role;
   messId: string;
+  joinedDate: string;
 };
 
 type AuthContextType = {
@@ -58,6 +59,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           email: data.email,
           role: data.role,
           messId: data.messId,
+          joinedDate: data.createdAt?.toDate
+            ? data.createdAt.toDate().toISOString()
+            : new Date().toISOString(),
         };
 
         setUser(userData);

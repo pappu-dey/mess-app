@@ -1,5 +1,5 @@
 import { useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
   Animated,
   ScrollView,
@@ -117,7 +117,7 @@ export default function PrivacyPolicy() {
             <Text style={styles.bulletPoint}>• Opt-out of certain data collection practices</Text>
             <Text style={styles.bulletPoint}>• Request a copy of your data</Text>
             <Text style={styles.sectionText}>
-              To exercise these rights, please contact us through the app or at support@messmanager.com
+              To exercise these rights, please contact us through the app or at xtpdev@gmail.com
             </Text>
           </View>
 
@@ -155,7 +155,7 @@ export default function PrivacyPolicy() {
               If you have any questions about this Privacy Policy, please contact us at:
             </Text>
             <Text style={styles.sectionText}>
-              Email: support@messmanager.com
+              Email: xtpdev@gmail.com
             </Text>
             <Text style={styles.sectionText}>
               Through the app: Settings → Contact Support

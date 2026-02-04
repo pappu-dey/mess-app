@@ -1,18 +1,19 @@
 // MealScreen.tsx
+import { useLocalSearchParams } from "expo-router";
 import {
   collection,
+  deleteDoc,
   doc,
   getDocs,
-  query,
   serverTimestamp,
   setDoc,
-  where,
 } from "firebase/firestore";
-import { Eye } from "lucide-react-native";
-import React, { useEffect, useState } from "react";
+import { Edit2, Eye, Plus } from "lucide-react-native";
+import React, { useCallback, useEffect, useState } from "react";
 
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Modal,
@@ -24,25 +25,42 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { useApp } from "../../context/AppContext";
 import { useAuth } from "../../context/AuthContext";
 import { db } from "../../firebase/firebaseConfig";
 
 /* ---------- helpers ---------- */
-const getMonthKey = () => {
+
+// Returns "YYYY-MM" for a given year + month (0-indexed)
+const buildMonthKey = (year: number, month: number): string =>
+  `${year}-${String(month + 1).padStart(2, "0")}`;
+
+// Current month key (used only as the initial default)
+const getCurrentMonthKey = () => {
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  return buildMonthKey(d.getFullYear(), d.getMonth());
 };
 
-const getDateKey = (day: number) => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    day,
-  ).padStart(2, "0")}`;
+// Parse a "YYYY-MM" key into { year, month (0-indexed) }
+const parseMonthKey = (key: string) => {
+  const [y, m] = key.split("-").map(Number);
+  return { year: y, month: m - 1 };
 };
 
-const formatDate = (day: number) => {
-  const d = new Date();
-  d.setDate(day);
+// How many days in a given year/month (0-indexed month)
+const daysInMonth = (year: number, month: number): number =>
+  new Date(year, month + 1, 0).getDate();
+
+// Build "YYYY-MM-DD" using the SELECTED month, not today
+const getDateKey = (monthKey: string, day: number): string => {
+  const { year, month } = parseMonthKey(monthKey);
+  return `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+};
+
+// Human-readable date string using the SELECTED month
+const formatDate = (monthKey: string, day: number): string => {
+  const { year, month } = parseMonthKey(monthKey);
+  const d = new Date(year, month, day);
   return d.toLocaleDateString("en-IN", {
     day: "2-digit",
     month: "short",
@@ -58,50 +76,91 @@ type Member = {
   role: string;
 };
 
+type MealEntry = {
+  memberId: string;
+  memberName: string;
+  breakfast: number;
+  lunch: number;
+  dinner: number;
+  date: string;
+  createdAt: any;
+};
+
 /* ---------- component ---------- */
 export default function MealScreen() {
+  const params = useLocalSearchParams();
+  const { refreshDashboard } = useApp();
   const { user } = useAuth();
   const messId = user?.messId;
-  const monthKey = getMonthKey();
   const isManager = user?.role === "manager";
 
+  // ── Month state ─────────────────────────────────────────────────
+  const [monthKey, setMonthKey] = useState<string>(() => {
+    if (params.month && typeof params.month === "string") {
+      // If param is ISO string (from Dashboard), convert to YYYY-MM
+      // If it's already YYYY-MM, this logic should still be safe-ish or we check regex
+      if (params.month.includes("T")) {
+        const d = new Date(params.month);
+        if (!isNaN(d.getTime())) {
+          return buildMonthKey(d.getFullYear(), d.getMonth());
+        }
+      }
+      return params.month;
+    }
+    return getCurrentMonthKey();
+  });
+
+  // Derived: parsed year / month and total days — recalculated whenever monthKey changes
+  const { year: selYear, month: selMonth } = parseMonthKey(monthKey);
+  const totalDays = daysInMonth(selYear, selMonth);
+
+  // ── Data ────────────────────────────────────────────────────────
   const [members, setMembers] = useState<Member[]>([]);
-  const [meals, setMeals] = useState<any>({});
+  const [meals, setMeals] = useState<Record<string, MealEntry>>({});
   const [loading, setLoading] = useState(true);
 
+  // ── Modal ───────────────────────────────────────────────────────
   const [showModal, setShowModal] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
   const [selectedDay, setSelectedDay] = useState<number>(new Date().getDate());
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
   const [showMemberPicker, setShowMemberPicker] = useState(false);
-
   const [breakfast, setBreakfast] = useState(false);
   const [lunch, setLunch] = useState(false);
   const [dinner, setDinner] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  /* ---------- load data ---------- */
+  // ── Cell edit modal ─────────────────────────────────────────────
+  const [showCellEditModal, setShowCellEditModal] = useState(false);
+  const [editingCell, setEditingCell] = useState<{
+    memberId: string;
+    memberName: string;
+    day: number;
+  } | null>(null);
+
+  /* ---------- load members (runs once) ---------- */
   useEffect(() => {
-    if (!messId) return;
-    loadMembers();
-    loadMeals();
+    if (messId) loadMembers();
   }, [messId]);
+
+  /* ---------- load meals whenever month changes ---------- */
+  useEffect(() => {
+    if (messId) loadMeals();
+  }, [messId, monthKey]); // ← monthKey in deps so re-fetch fires on nav
 
   const loadMembers = async () => {
     if (!messId) return;
     try {
-      // Fetch members from users collection where messId matches
-      const q = query(collection(db, "users"), where("messId", "==", messId));
-      const snap = await getDocs(q);
-
-      const membersList = snap.docs.map((d) => ({
+      const snap = await getDocs(collection(db, "messes", messId, "members"));
+      const list = snap.docs.map((d) => ({
         id: d.id,
         name: d.data().name,
         email: d.data().email,
         role: d.data().role,
       }));
-
-      setMembers(membersList.sort((a, b) => a.name.localeCompare(b.name)));
-    } catch (error) {
-      console.error(error);
+      setMembers(list.sort((a, b) => a.name.localeCompare(b.name)));
+    } catch (err) {
+      console.error("loadMembers:", err);
     }
   };
 
@@ -112,12 +171,11 @@ export default function MealScreen() {
       const snap = await getDocs(
         collection(db, "messes", messId, "meals", monthKey, "entries"),
       );
-
-      const data: any = {};
-      snap.docs.forEach((d) => (data[d.id] = d.data()));
+      const data: Record<string, MealEntry> = {};
+      snap.docs.forEach((d) => (data[d.id] = d.data() as MealEntry));
       setMeals(data);
-    } catch (error) {
-      console.error(error);
+    } catch (err) {
+      console.error("loadMeals:", err);
     } finally {
       setLoading(false);
     }
@@ -125,12 +183,24 @@ export default function MealScreen() {
 
   /* ---------- save meal ---------- */
   const saveMeal = async () => {
-    if (!selectedMember || !messId) {
-      alert("Please select a member");
+    // Hard guard — only managers can write, even if modal is somehow open
+    if (!isManager) {
+      Alert.alert("Access Denied", "Only managers can add or edit meal entries.");
       return;
     }
 
-    const dateKey = getDateKey(selectedDay);
+    if (!selectedMember || !messId) {
+      Alert.alert("Validation", "Please select a member before saving.");
+      return;
+    }
+
+    if (!breakfast && !lunch && !dinner) {
+      Alert.alert("Validation", "Please enable at least one meal.");
+      return;
+    }
+
+    setSaving(true);
+    const dateKey = getDateKey(monthKey, selectedDay);
     const entryId = `${selectedMember.id}_${dateKey}`;
 
     try {
@@ -142,88 +212,209 @@ export default function MealScreen() {
           breakfast: breakfast ? 1 : 0,
           lunch: lunch ? 1 : 0,
           dinner: dinner ? 1 : 0,
-          date: formatDate(selectedDay),
+          date: formatDate(monthKey, selectedDay),
           createdAt: serverTimestamp(),
         },
         { merge: true },
       );
 
       closeModal();
-      loadMeals();
-    } catch (error) {
-      console.error(error);
-      alert("Failed to save meal entry");
+      await loadMeals(); // refresh grid
+      // Refresh dashboard to show updated data instantly
+      refreshDashboard();
+    } catch (err) {
+      console.error("saveMeal:", err);
+      Alert.alert("Error", "Failed to save meal entry. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /* ---------- save cell edit ---------- */
+  const saveCellEdit = async () => {
+    if (!isManager || !editingCell || !messId) return;
+
+    if (!breakfast && !lunch && !dinner) {
+      // If all meals are unchecked, delete the entry
+      const dateKey = getDateKey(monthKey, editingCell.day);
+      const entryId = `${editingCell.memberId}_${dateKey}`;
+
+      try {
+        await deleteDoc(
+          doc(db, "messes", messId, "meals", monthKey, "entries", entryId)
+        );
+        closeCellEditModal();
+        await loadMeals();
+        // Refresh dashboard to show updated data instantly
+        refreshDashboard();
+      } catch (err) {
+        console.error("deleteMeal:", err);
+        Alert.alert("Error", "Failed to delete meal entry.");
+      }
+      return;
+    }
+
+    setSaving(true);
+    const dateKey = getDateKey(monthKey, editingCell.day);
+    const entryId = `${editingCell.memberId}_${dateKey}`;
+
+    try {
+      await setDoc(
+        doc(db, "messes", messId, "meals", monthKey, "entries", entryId),
+        {
+          memberId: editingCell.memberId,
+          memberName: editingCell.memberName,
+          breakfast: breakfast ? 1 : 0,
+          lunch: lunch ? 1 : 0,
+          dinner: dinner ? 1 : 0,
+          date: formatDate(monthKey, editingCell.day),
+          createdAt: serverTimestamp(),
+        },
+        { merge: true },
+      );
+
+      closeCellEditModal();
+      await loadMeals();
+      // Refresh dashboard to show updated data instantly
+      refreshDashboard();
+    } catch (err) {
+      console.error("saveCellEdit:", err);
+      Alert.alert("Error", "Failed to save meal entry.");
+    } finally {
+      setSaving(false);
     }
   };
 
   /* ---------- modal handlers ---------- */
   const closeModal = () => {
     setShowModal(false);
+    setIsEditMode(false);
     setBreakfast(false);
     setLunch(false);
     setDinner(false);
     setSelectedMember(null);
+    setSaving(false);
+  };
+
+  const closeCellEditModal = () => {
+    setShowCellEditModal(false);
+    setEditingCell(null);
+    setBreakfast(false);
+    setLunch(false);
+    setDinner(false);
+    setSaving(false);
   };
 
   const openAddModal = () => {
-    // Only allow managers to open the modal
     if (!isManager) {
-      alert("Only managers can add or edit meal entries");
+      Alert.alert("Access Denied", "Only managers can add or edit meal entries.");
       return;
     }
 
-    setSelectedDay(new Date().getDate());
+    // Default the day to today IF we're viewing the current month,
+    // otherwise default to day 1 of the selected month.
+    const now = new Date();
+    const currentMonthKey = getCurrentMonthKey();
+    const defaultDay = monthKey === currentMonthKey ? now.getDate() : 1;
+
+    setSelectedDay(defaultDay);
     setBreakfast(false);
     setLunch(false);
     setDinner(false);
     setSelectedMember(null);
+    setIsEditMode(false);
     setShowModal(true);
   };
 
-  /* ---------- date navigation ---------- */
+  const openCellEditModal = (memberId: string, memberName: string, day: number) => {
+    if (!isManager) return;
+
+    const dateKey = getDateKey(monthKey, day);
+    const entryId = `${memberId}_${dateKey}`;
+    const entry = meals[entryId];
+
+    setEditingCell({ memberId, memberName, day });
+    setBreakfast(entry?.breakfast === 1);
+    setLunch(entry?.lunch === 1);
+    setDinner(entry?.dinner === 1);
+    setShowCellEditModal(true);
+  };
+
+  /* ---------- date navigation inside modal ---------- */
   const adjustDate = (offset: number) => {
     const newDay = selectedDay + offset;
-    const daysInMonth = new Date(
-      new Date().getFullYear(),
-      new Date().getMonth() + 1,
-      0,
-    ).getDate();
-
-    if (newDay >= 1 && newDay <= daysInMonth) {
+    // Clamp to the SELECTED month's actual day count
+    if (newDay >= 1 && newDay <= totalDays) {
       setSelectedDay(newDay);
     }
   };
 
+  /* ---------- month navigation ---------- */
+  const handleMonthChange = useCallback(
+    (direction: "prev" | "next") => {
+      let newYear = selYear;
+      let newMonth = selMonth + (direction === "next" ? 1 : -1);
+
+      // Wrap year boundaries
+      if (newMonth > 11) {
+        newMonth = 0;
+        newYear += 1;
+      } else if (newMonth < 0) {
+        newMonth = 11;
+        newYear -= 1;
+      }
+
+      setMonthKey(buildMonthKey(newYear, newMonth));
+      // Close modals if open to avoid stale day state
+      if (showModal) closeModal();
+      if (showCellEditModal) closeCellEditModal();
+    },
+    [selYear, selMonth, showModal, showCellEditModal],
+  );
+
+  const getMonthName = () => {
+    const d = new Date(selYear, selMonth);
+    return d.toLocaleString("en-IN", { month: "long", year: "numeric" });
+  };
+
   /* ---------- render helpers ---------- */
   const renderMeal = (memberId: string, day: number, type: string) => {
-    const dateKey = getDateKey(day);
+    const dateKey = getDateKey(monthKey, day);
     const entryId = `${memberId}_${dateKey}`;
-    return meals?.[entryId]?.[type] ? "✓" : "";
+    return meals?.[entryId]?.[type as keyof MealEntry] ? "✓" : "";
   };
 
-  /* ---------- calculate totals ---------- */
-  const getMemberTotal = (memberId: string) => {
-    let total = 0;
-    for (let day = 1; day <= 31; day++) {
-      const dateKey = getDateKey(day);
-      const entryId = `${memberId}_${dateKey}`;
-      const entry = meals?.[entryId];
-      if (entry) {
-        total +=
-          (entry.breakfast || 0) + (entry.lunch || 0) + (entry.dinner || 0);
+  const hasAnyMeal = (memberId: string, day: number): boolean => {
+    const dateKey = getDateKey(monthKey, day);
+    const entryId = `${memberId}_${dateKey}`;
+    const entry = meals?.[entryId];
+    return entry ? (entry.breakfast === 1 || entry.lunch === 1 || entry.dinner === 1) : false;
+  };
+
+  /* ---------- totals (use selected month) ---------- */
+  const getMemberTotal = useCallback(
+    (memberId: string) => {
+      let total = 0;
+      for (let day = 1; day <= totalDays; day++) {
+        const dateKey = getDateKey(monthKey, day);
+        const entryId = `${memberId}_${dateKey}`;
+        const entry = meals?.[entryId];
+        if (entry) {
+          total += (entry.breakfast || 0) + (entry.lunch || 0) + (entry.dinner || 0);
+        }
       }
-    }
-    return total;
-  };
+      return total;
+    },
+    [meals, monthKey, totalDays],
+  );
 
-  const getGrandTotal = () => {
+  const getGrandTotal = useCallback(() => {
     let total = 0;
-    members.forEach((m) => {
-      total += getMemberTotal(m.id);
-    });
+    members.forEach((m) => (total += getMemberTotal(m.id)));
     return total;
-  };
+  }, [members, getMemberTotal]);
 
+  /* ---------- loading state ---------- */
   if (loading) {
     return (
       <View style={styles.center}>
@@ -235,29 +426,46 @@ export default function MealScreen() {
   /* ---------- UI ---------- */
   return (
     <View style={styles.container}>
-      <View style={styles.headerContainer}>
-        <View>
+      {/* ── Month nav header ── */}
+      <View style={styles.monthSelectorContainer}>
+        <TouchableOpacity
+          style={styles.monthNavButton}
+          onPress={() => handleMonthChange("prev")}
+        >
+          <Text style={styles.monthNavButtonText}>‹</Text>
+        </TouchableOpacity>
+
+        <View style={styles.monthDisplayContainer}>
           <Text style={styles.header}>Meal Entry</Text>
-          <Text style={styles.subHeader}>{monthKey}</Text>
+          <Text style={styles.subHeader}>{getMonthName()}</Text>
 
           {!isManager && (
-            <View style={styles.viewOnlyContainer}>
-              <Eye size={14} color="#6B7280" />
+            <View style={styles.viewOnlyBadge}>
+              <Eye size={14} color="#F59E0B" />
               <Text style={styles.viewOnlyText}>View Only</Text>
             </View>
           )}
         </View>
 
-        <View style={styles.totalBadge}>
-          <Text style={styles.totalLabel}>Total Meals</Text>
-          <Text style={styles.totalValue}>{getGrandTotal()}</Text>
-        </View>
+        <TouchableOpacity
+          style={styles.monthNavButton}
+          onPress={() => handleMonthChange("next")}
+        >
+          <Text style={styles.monthNavButtonText}>›</Text>
+        </TouchableOpacity>
       </View>
 
-      <ScrollView horizontal>
-        <ScrollView>
+      {/* ── Grand total badge ── */}
+      <View style={styles.totalBadge}>
+        <Text style={styles.totalLabel}>Total Meals</Text>
+        <Text style={styles.totalValue}>{getGrandTotal()}</Text>
+      </View>
+
+      {/* ── Scrollable meal grid ── */}
+      <ScrollView horizontal style={styles.scrollOuter}>
+        <ScrollView style={styles.scrollInner}>
           <View style={styles.table}>
-            {/* Header */}
+            {/* Header row */}
             <View style={styles.row}>
               <View style={styles.dateCell}>
                 <Text style={styles.headerText}>Date</Text>
@@ -280,45 +488,72 @@ export default function MealScreen() {
               ))}
             </View>
 
-            {/* Days */}
-            {Array.from({ length: 31 }).map((_, i) => (
-              <View key={i} style={styles.row}>
+            {/* Day rows — only render actual days in the selected month */}
+            {Array.from({ length: totalDays }, (_, i) => i + 1).map((day) => (
+              <View key={day} style={styles.row}>
                 <View style={styles.dateCell}>
-                  <Text style={styles.dateText}>{i + 1}</Text>
+                  <Text style={styles.dateText}>{day}</Text>
                 </View>
 
-                {members.map((m) => (
-                  <View key={m.id} style={styles.subRow}>
-                    <View style={styles.subCell}>
-                      <Text style={styles.checkmark}>
-                        {renderMeal(m.id, i + 1, "breakfast")}
-                      </Text>
-                    </View>
-                    <View style={styles.subCell}>
-                      <Text style={styles.checkmark}>
-                        {renderMeal(m.id, i + 1, "lunch")}
-                      </Text>
-                    </View>
-                    <View style={styles.subCell}>
-                      <Text style={styles.checkmark}>
-                        {renderMeal(m.id, i + 1, "dinner")}
-                      </Text>
-                    </View>
-                  </View>
-                ))}
+                {members.map((m) => {
+                  const hasMeal = hasAnyMeal(m.id, day);
+                  return (
+                    <TouchableOpacity
+                      key={m.id}
+                      style={styles.subRow}
+                      onPress={() => isManager && openCellEditModal(m.id, m.name, day)}
+                      disabled={!isManager}
+                      activeOpacity={isManager ? 0.6 : 1}
+                    >
+                      <View
+                        style={[
+                          styles.subCell,
+                          hasMeal && isManager && styles.editableCell,
+                        ]}
+                      >
+                        <Text style={styles.checkmark}>
+                          {renderMeal(m.id, day, "breakfast")}
+                        </Text>
+                      </View>
+                      <View
+                        style={[
+                          styles.subCell,
+                          hasMeal && isManager && styles.editableCell,
+                        ]}
+                      >
+                        <Text style={styles.checkmark}>
+                          {renderMeal(m.id, day, "lunch")}
+                        </Text>
+                      </View>
+                      <View
+                        style={[
+                          styles.subCell,
+                          hasMeal && isManager && styles.editableCell,
+                        ]}
+                      >
+                        <Text style={styles.checkmark}>
+                          {renderMeal(m.id, day, "dinner")}
+                        </Text>
+                      </View>
+                      {hasMeal && isManager && (
+                        <View style={styles.editIndicator}>
+                          <Edit2 size={10} color="#6366F1" />
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             ))}
 
-            {/* Totals Row */}
+            {/* Totals row */}
             <View style={[styles.row, styles.totalRow]}>
               <View style={styles.dateCell}>
                 <Text style={styles.totalText}>Total</Text>
               </View>
               {members.map((m) => (
                 <View key={m.id} style={styles.memberTotalCell}>
-                  <Text style={styles.memberTotalText}>
-                    {getMemberTotal(m.id)}
-                  </Text>
+                  <Text style={styles.memberTotalText}>{getMemberTotal(m.id)}</Text>
                 </View>
               ))}
             </View>
@@ -326,14 +561,16 @@ export default function MealScreen() {
         </ScrollView>
       </ScrollView>
 
-      {/* Floating Add Button - Only visible for managers */}
+      {/* ── FAB — manager only ── */}
       {isManager && (
-        <TouchableOpacity style={styles.fab} onPress={openAddModal}>
-          <Text style={styles.fabText}>＋</Text>
+        <TouchableOpacity style={styles.fab} onPress={openAddModal} activeOpacity={0.75}>
+          <Plus size={32} color="#FFF" strokeWidth={3} />
         </TouchableOpacity>
       )}
 
-      {/* ---------- Add Meal Modal ---------- */}
+      {/* ────────────────────────────────────────────────────────────
+           ADD MEAL MODAL
+           ──────────────────────────────────────────────────────── */}
       <Modal visible={showModal} transparent animationType="slide">
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -348,36 +585,60 @@ export default function MealScreen() {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Add Meal Entry</Text>
 
-            {/* Date Selector */}
+            {/* Date picker */}
             <Text style={styles.fieldLabel}>Date</Text>
             <View style={styles.dateSelector}>
               <TouchableOpacity
                 style={styles.dateButton}
                 onPress={() => adjustDate(-1)}
+                disabled={selectedDay <= 1}
               >
-                <Text style={styles.dateButtonText}>◀</Text>
+                <Text
+                  style={[
+                    styles.dateButtonText,
+                    selectedDay <= 1 && styles.dateButtonDisabled,
+                  ]}
+                >
+                  ◀
+                </Text>
               </TouchableOpacity>
 
-              <Text style={styles.dateDisplay}>{formatDate(selectedDay)}</Text>
+              <Text style={styles.dateDisplay}>
+                {formatDate(monthKey, selectedDay)}
+              </Text>
 
               <TouchableOpacity
                 style={styles.dateButton}
                 onPress={() => adjustDate(1)}
+                disabled={selectedDay >= totalDays}
               >
-                <Text style={styles.dateButtonText}>▶</Text>
+                <Text
+                  style={[
+                    styles.dateButtonText,
+                    selectedDay >= totalDays && styles.dateButtonDisabled,
+                  ]}
+                >
+                  ▶
+                </Text>
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity
-              onPress={() => setSelectedDay(new Date().getDate())}
-            >
-              <Text style={styles.todayLink}>Set to Today</Text>
-            </TouchableOpacity>
+            {/* "Set to Today" only shown when viewing current month */}
+            {monthKey === getCurrentMonthKey() && (
+              <TouchableOpacity
+                onPress={() => setSelectedDay(new Date().getDate())}
+              >
+                <Text style={styles.todayLink}>Set to Today</Text>
+              </TouchableOpacity>
+            )}
 
-            {/* Member Selector */}
+            {/* Member selector */}
             <Text style={styles.fieldLabel}>Member</Text>
             <TouchableOpacity
-              style={styles.memberSelector}
+              style={[
+                styles.memberSelector,
+                !selectedMember && styles.memberSelectorEmpty,
+              ]}
               onPress={() => setShowMemberPicker(true)}
             >
               <Text
@@ -391,41 +652,60 @@ export default function MealScreen() {
               <Text style={styles.chevron}>▼</Text>
             </TouchableOpacity>
 
-            {/* Meal Type Switches */}
+            {/* Meal toggles */}
             <Text style={styles.fieldLabel}>Meals</Text>
 
             <View style={styles.switchContainer}>
-              <Text style={styles.switchLabel}>Breakfast</Text>
+              <Text style={styles.switchLabel}>🌅 Breakfast</Text>
               <Switch
                 value={breakfast}
                 onValueChange={setBreakfast}
                 trackColor={{ false: "#334155", true: "#6366F1" }}
                 thumbColor={breakfast ? "#FFF" : "#94A3B8"}
+                disabled={saving}
               />
             </View>
 
             <View style={styles.switchContainer}>
-              <Text style={styles.switchLabel}>Lunch</Text>
+              <Text style={styles.switchLabel}>☀️ Lunch</Text>
               <Switch
                 value={lunch}
                 onValueChange={setLunch}
                 trackColor={{ false: "#334155", true: "#6366F1" }}
                 thumbColor={lunch ? "#FFF" : "#94A3B8"}
+                disabled={saving}
               />
             </View>
 
             <View style={styles.switchContainer}>
-              <Text style={styles.switchLabel}>Dinner</Text>
+              <Text style={styles.switchLabel}>🌙 Dinner</Text>
               <Switch
                 value={dinner}
                 onValueChange={setDinner}
                 trackColor={{ false: "#334155", true: "#6366F1" }}
                 thumbColor={dinner ? "#FFF" : "#94A3B8"}
+                disabled={saving}
               />
             </View>
 
-            <TouchableOpacity style={styles.saveBtn} onPress={saveMeal}>
-              <Text style={styles.saveBtnText}>Save Meal Entry</Text>
+            {/* Save */}
+            <TouchableOpacity
+              style={[
+                styles.saveBtn,
+                (!selectedMember || (!breakfast && !lunch && !dinner) || saving) &&
+                styles.saveBtnDisabled,
+              ]}
+              onPress={saveMeal}
+              disabled={
+                !selectedMember || (!breakfast && !lunch && !dinner) || saving
+              }
+              activeOpacity={0.75}
+            >
+              {saving ? (
+                <ActivityIndicator size="small" color="#FFF" />
+              ) : (
+                <Text style={styles.saveBtnText}>Save Meal Entry</Text>
+              )}
             </TouchableOpacity>
 
             <TouchableOpacity style={styles.cancelBtn} onPress={closeModal}>
@@ -435,7 +715,101 @@ export default function MealScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* ---------- Member Picker Modal ---------- */}
+      {/* ──────────────────────────────────────────────────────────
+           EDIT CELL MODAL
+           ──────────────────────────────────────────────────────── */}
+      <Modal visible={showCellEditModal} transparent animationType="fade">
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={styles.modalOverlay}
+        >
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            onPress={closeCellEditModal}
+            activeOpacity={1}
+          />
+
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Edit Meal Entry</Text>
+
+            {editingCell && (
+              <>
+                <View style={styles.editInfoCard}>
+                  <Text style={styles.editInfoLabel}>Member</Text>
+                  <Text style={styles.editInfoValue}>{editingCell.memberName}</Text>
+                </View>
+
+                <View style={styles.editInfoCard}>
+                  <Text style={styles.editInfoLabel}>Date</Text>
+                  <Text style={styles.editInfoValue}>
+                    {formatDate(monthKey, editingCell.day)}
+                  </Text>
+                </View>
+
+                {/* Meal toggles */}
+                <Text style={styles.fieldLabel}>Meals</Text>
+
+                <View style={styles.switchContainer}>
+                  <Text style={styles.switchLabel}>🌅 Breakfast</Text>
+                  <Switch
+                    value={breakfast}
+                    onValueChange={setBreakfast}
+                    trackColor={{ false: "#334155", true: "#6366F1" }}
+                    thumbColor={breakfast ? "#FFF" : "#94A3B8"}
+                    disabled={saving}
+                  />
+                </View>
+
+                <View style={styles.switchContainer}>
+                  <Text style={styles.switchLabel}>☀️ Lunch</Text>
+                  <Switch
+                    value={lunch}
+                    onValueChange={setLunch}
+                    trackColor={{ false: "#334155", true: "#6366F1" }}
+                    thumbColor={lunch ? "#FFF" : "#94A3B8"}
+                    disabled={saving}
+                  />
+                </View>
+
+                <View style={styles.switchContainer}>
+                  <Text style={styles.switchLabel}>🌙 Dinner</Text>
+                  <Switch
+                    value={dinner}
+                    onValueChange={setDinner}
+                    trackColor={{ false: "#334155", true: "#6366F1" }}
+                    thumbColor={dinner ? "#FFF" : "#94A3B8"}
+                    disabled={saving}
+                  />
+                </View>
+
+                {/* Save / Delete */}
+                <TouchableOpacity
+                  style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
+                  onPress={saveCellEdit}
+                  disabled={saving}
+                  activeOpacity={0.75}
+                >
+                  {saving ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <Text style={styles.saveBtnText}>
+                      {!breakfast && !lunch && !dinner ? "Delete Entry" : "Update Entry"}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.cancelBtn} onPress={closeCellEditModal}>
+                  <Text style={styles.cancelText}>Cancel</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ──────────────────────────────────────────────────────────
+           MEMBER PICKER MODAL
+           ──────────────────────────────────────────────────────── */}
       <Modal visible={showMemberPicker} transparent animationType="fade">
         <View style={styles.pickerOverlay}>
           <TouchableOpacity
@@ -452,8 +826,7 @@ export default function MealScreen() {
                 <TouchableOpacity
                   style={[
                     styles.memberOption,
-                    selectedMember?.id === item.id &&
-                      styles.memberOptionSelected,
+                    selectedMember?.id === item.id && styles.memberOptionSelected,
                   ]}
                   onPress={() => {
                     setSelectedMember(item);
@@ -474,7 +847,7 @@ export default function MealScreen() {
               style={styles.pickerCloseBtn}
               onPress={() => setShowMemberPicker(false)}
             >
-              <Text style={styles.pickerCloseText}>Close</Text>
+              <Text style={styles.pickerCloseText}>Done</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -493,35 +866,71 @@ const styles = StyleSheet.create({
     backgroundColor: "#0F172A",
   },
 
-  headerContainer: {
+  // ── Month nav ──────────────────────────────────────────────────
+  monthSelectorContainer: {
     flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
-    alignItems: "flex-start",
     paddingHorizontal: 16,
-    paddingTop: 40,
+    paddingTop: 48,
     paddingBottom: 8,
   },
-
-  header: {
+  monthNavButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#1E293B",
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#334155",
+  },
+  monthNavButtonText: {
     fontSize: 28,
+    color: "#6366F1",
+    fontWeight: "700",
+  },
+  monthDisplayContainer: {
+    flex: 1,
+    alignItems: "center",
+    paddingHorizontal: 12,
+  },
+  header: {
+    fontSize: 24,
     fontWeight: "800",
     color: "#FFF",
-    marginBottom: 4,
+    marginBottom: 2,
   },
   subHeader: {
     fontSize: 14,
     color: "#94A3B8",
     marginBottom: 4,
   },
+
+  // View-only pill badge
   viewOnlyBadge: {
-    fontSize: 12,
-    color: "#F59E0B",
-    fontWeight: "600",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(245, 158, 11, 0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(245, 158, 11, 0.4)",
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 999,
     marginTop: 4,
   },
+  viewOnlyText: {
+    color: "#F59E0B",
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 0.3,
+  },
 
+  // ── Total badge ────────────────────────────────────────────────
   totalBadge: {
     backgroundColor: "#6366F1",
+    marginHorizontal: 16,
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 12,
@@ -545,6 +954,10 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: "800",
   },
+
+  // ── Scrollable table ───────────────────────────────────────────
+  scrollOuter: { flex: 1 },
+  scrollInner: { flex: 1 },
 
   table: {
     backgroundColor: "#1E293B",
@@ -591,9 +1004,7 @@ const styles = StyleSheet.create({
     padding: 8,
     backgroundColor: "#0F172A",
   },
-  subRow: {
-    flexDirection: "row",
-  },
+  subRow: { flexDirection: "row", position: "relative" },
   subCell: {
     width: 40,
     height: 40,
@@ -601,6 +1012,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderRightWidth: 1,
     borderRightColor: "#334155",
+  },
+  editableCell: {
+    backgroundColor: "rgba(99, 102, 241, 0.05)",
+  },
+  editIndicator: {
+    position: "absolute",
+    top: 2,
+    right: 2,
+    backgroundColor: "rgba(99, 102, 241, 0.2)",
+    borderRadius: 8,
+    padding: 2,
   },
   mealType: {
     color: "#94A3B8",
@@ -613,6 +1035,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
+  // Totals row
   totalRow: {
     backgroundColor: "#6366F1",
     borderBottomWidth: 0,
@@ -637,9 +1060,10 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
 
+  // ── FAB ────────────────────────────────────────────────────────
   fab: {
     position: "absolute",
-    bottom: 24,
+    bottom: 50,
     right: 24,
     backgroundColor: "#6366F1",
     width: 64,
@@ -653,42 +1077,37 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 12,
   },
-  fabText: { color: "#FFF", fontSize: 32, fontWeight: "700" },
 
-  modalOverlay: {
-    flex: 1,
-    justifyContent: "flex-end",
-  },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.7)",
-  },
+  // ── Modals ─────────────────────────────────────────────────────
+  modalOverlay: { flex: 1, justifyContent: "flex-end" },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)" },
   modalCard: {
     backgroundColor: "#1E293B",
     padding: 24,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     maxHeight: "85%",
+    marginBottom: 48,
     zIndex: 10,
   },
-
   modalTitle: {
     color: "#FFF",
     fontSize: 20,
     fontWeight: "800",
-    marginBottom: 10,
+    marginBottom: 16,
     textAlign: "center",
   },
 
   fieldLabel: {
     color: "#94A3B8",
     fontSize: 10,
-    marginBottom: 5,
+    marginBottom: 6,
     fontWeight: "600",
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
 
+  // Date selector row
   dateSelector: {
     flexDirection: "row",
     alignItems: "center",
@@ -696,45 +1115,74 @@ const styles = StyleSheet.create({
     backgroundColor: "#0F172A",
     borderRadius: 12,
     padding: 12,
-    marginBottom: 8,
+    marginBottom: 6,
     borderWidth: 1,
     borderColor: "#334155",
   },
-  dateButton: {
-    padding: 8,
-  },
+  dateButton: { padding: 8 },
   dateButtonText: {
     color: "#6366F1",
-    fontSize: 10,
+    fontSize: 14,
     fontWeight: "700",
+  },
+  dateButtonDisabled: {
+    color: "#334155",
   },
   dateDisplay: {
     color: "#FFF",
-    fontSize: 10,
+    fontSize: 14,
     fontWeight: "600",
   },
   todayLink: {
     color: "#6366F1",
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: "600",
-    marginBottom: 8,
+    marginBottom: 12,
     textAlign: "center",
   },
 
+  // Edit info cards
+  editInfoCard: {
+    backgroundColor: "#0F172A",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#334155",
+  },
+  editInfoLabel: {
+    color: "#94A3B8",
+    fontSize: 10,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  editInfoValue: {
+    color: "#FFF",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+
+  // Member selector
   memberSelector: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     backgroundColor: "#0F172A",
     borderRadius: 12,
-    padding: 16,
-    marginBottom: 10,
+    padding: 14,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: "#334155",
   },
+  memberSelectorEmpty: {
+    borderColor: "#475569",
+    borderStyle: "dashed",
+  },
   memberSelectorText: {
     color: "#FFF",
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: "600",
   },
   placeholderText: {
@@ -743,50 +1191,52 @@ const styles = StyleSheet.create({
   },
   chevron: {
     color: "#64748B",
-    fontSize: 10,
+    fontSize: 12,
   },
 
+  // Meal switches
   switchContainer: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     backgroundColor: "#0F172A",
-    padding: 10,
+    padding: 12,
     borderRadius: 12,
-    marginBottom: 5,
+    marginBottom: 6,
     borderWidth: 1,
     borderColor: "#334155",
   },
   switchLabel: {
     color: "#FFF",
-    fontSize: 10,
+    fontSize: 14,
     fontWeight: "600",
   },
 
+  // Save / Cancel
   saveBtn: {
     backgroundColor: "#6366F1",
     padding: 16,
     borderRadius: 12,
     alignItems: "center",
-    marginTop: 5,
-    marginBottom: 5,
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  saveBtnDisabled: {
+    backgroundColor: "#334155",
   },
   saveBtnText: {
     color: "#FFF",
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "700",
   },
-
-  cancelBtn: {
-    alignItems: "center",
-    padding: 10,
-  },
+  cancelBtn: { alignItems: "center", padding: 10 },
   cancelText: {
     color: "#94A3B8",
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "600",
   },
 
+  // ── Member Picker Modal ────────────────────────────────────────
   pickerOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.8)",
@@ -805,6 +1255,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     maxHeight: "70%",
     padding: 24,
+    marginBottom: 48,
     borderWidth: 1,
     borderColor: "#334155",
   },
@@ -826,7 +1277,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   memberOptionSelected: {
-    backgroundColor: "#334155",
+    backgroundColor: "rgba(99, 102, 241, 0.15)",
+    borderColor: "rgba(99, 102, 241, 0.3)",
+    borderWidth: 1,
   },
   memberOptionName: {
     color: "#FFF",
@@ -840,7 +1293,7 @@ const styles = StyleSheet.create({
   },
   checkmarkLarge: {
     color: "#10B981",
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: "700",
   },
   pickerCloseBtn: {
@@ -854,17 +1307,5 @@ const styles = StyleSheet.create({
     color: "#FFF",
     fontWeight: "700",
     fontSize: 16,
-  },
-  viewOnlyContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 4,
-  },
-
-  viewOnlyText: {
-    fontSize: 12,
-    color: "#6B7280",
-    fontWeight: "500",
   },
 });

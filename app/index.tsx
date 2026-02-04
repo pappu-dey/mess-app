@@ -1,42 +1,41 @@
 import { useRouter } from "expo-router";
-import { doc, getDoc } from "firebase/firestore";
 import { useEffect } from "react";
-import { ActivityIndicator, View } from "react-native";
-import { auth, db } from "../firebase/firebaseConfig";
+import { ActivityIndicator, StyleSheet, View } from "react-native";
+import { useApp } from "../context/AppContext";
 
 export default function Index() {
   const router = useRouter();
+  const { appState, loading } = useApp();
 
   useEffect(() => {
-    const run = async () => {
-      const user = auth.currentUser;
+    if (loading || appState === "initializing") return;
 
-      // 🔐 Safety check (should not happen if _layout.tsx is correct)
-      if (!user) {
+    // Navigate based on app state
+    switch (appState) {
+      case "unauthenticated":
         router.replace("/auth/login");
-        return;
-      }
-
-      try {
-        const snap = await getDoc(doc(db, "users", user.uid));
-
-        if (snap.exists() && snap.data().messId) {
-          router.replace("/mess/dashboard");
-        } else {
-          router.replace("/mess/select");
-        }
-      } catch (e) {
-        console.error("Failed to load user doc:", e);
+        break;
+      case "no_mess":
         router.replace("/mess/select");
-      }
-    };
-
-    run();
-  }, []);
+        break;
+      case "ready":
+        router.replace("/mess/dashboard");
+        break;
+    }
+  }, [appState, loading, router]);
 
   return (
-    <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-      <ActivityIndicator size="large" />
+    <View style={styles.container}>
+      <ActivityIndicator size="large" color="#6366F1" />
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#0F172A",
+  },
+});
