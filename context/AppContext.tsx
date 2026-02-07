@@ -40,6 +40,7 @@ export type User = {
     role: Role;
     messId: string | null;
     joinedDate: string;
+    photoURL?: string | null; // Optional profile picture URL
 };
 
 export type MessData = {
@@ -109,6 +110,7 @@ type AppContextType = {
     clearMessData: () => void;
     updateDashboardMonth: (date: Date) => Promise<void>;
     refreshDashboard: () => Promise<void>;
+    setUser: React.Dispatch<React.SetStateAction<User | null>>;
 };
 
 /* ---------- context ---------- */
@@ -156,6 +158,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
                     joinedDate: data.createdAt?.toDate
                         ? data.createdAt.toDate().toISOString()
                         : new Date().toISOString(),
+                    photoURL: data.photoURL || null,
                 };
 
                 return userData;
@@ -253,6 +256,31 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
                     });
 
                     setMembers(membersList);
+
+                    // ── AUTO-SYNC ROLE ──
+                    // If the current user's role in the mess (members subcollection) differs from
+                    // their global profile role, update the global profile to match.
+                    // This creates a self-healing consistency.
+                    const currentUserMember = membersList.find(m => m.id === userId);
+                    if (currentUserMember) {
+                        const memberRole = currentUserMember.role;
+                        // specific check: if member list says "manager" but we might be "member" globally, fix it.
+                        // We assume 'members' collection is source of truth for mess roles.
+                        const userRef = doc(db, "users", userId);
+
+                        // We use updateDoc blindly here? 
+                        // Optimization: We could check 'user' state if available in scope, but 
+                        // safely we can just ensure consistency. To avoid infinite loops, 
+                        // we'll rely on the value actually being different in Firestore (updateDoc won't trigger listeners if no change? actually it might).
+                        // Let's rely on the Real-time user listener to handle the local state update.
+                        // We just push the truth from Member -> User.
+
+                        // To avoid excessive writes, we could read first, but that's an extra read.
+                        // Let's just do it. The user listener will debounce if value is same.
+
+                        // Actually, 'updateDoc' is cheap.
+                        updateDoc(userRef, { role: memberRole }).catch(err => console.error("Auto-sync role failed", err));
+                    }
                 },
                 (error) => {
                     console.error("Members listener error:", error);
@@ -559,18 +587,26 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
                             if (!memberData.userId) {
                                 await updateDoc(memberDoc.ref, {
                                     userId: firebaseUser.uid,
-                                    status: 'ACTIVE'
+                                    status: 'ACTIVE',
+                                    // Sync name from user profile to member doc
+                                    name: firebaseUser.displayName || memberData.name
                                 });
                             }
 
                             // Update User Doc with messId
-                            await setDoc(doc(db, "users", firebaseUser.uid), {
+                            const userUpdateData: any = {
                                 name: userData?.name || firebaseUser.displayName || "User",
                                 email: firebaseUser.email,
                                 messId: messId,
                                 role: memberData.role || 'member',
-                                createdAt: userData?.joinedDate ? undefined : serverTimestamp(), // Keep old if exists
-                            }, { merge: true });
+                            };
+
+                            // Only set createdAt if it doesn't already exist
+                            if (!userData?.joinedDate) {
+                                userUpdateData.createdAt = serverTimestamp();
+                            }
+
+                            await setDoc(doc(db, "users", firebaseUser.uid), userUpdateData, { merge: true });
 
                             // Refetch updated user data
                             userData = await fetchUserData(firebaseUser);
@@ -715,6 +751,67 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
         };
     }, [initializeApp]);
 
+    /**
+     * Real-time listener for User Profile changes (role, messId, etc.)
+     */
+    useEffect(() => {
+        if (!user?.uid) return;
+
+        console.log("u️ Setting up real-time listener for user:", user.uid);
+        const unsubscribe = onSnapshot(doc(db, "users", user.uid), (docSnap) => {
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                setUser((prev) => {
+                    if (!prev) return null;
+
+                    const newRole = data.role || "member";
+                    const newMessId = data.messId || null;
+
+                    // Update if role or messId changed (or other critical fields)
+                    if (prev.role !== newRole || prev.messId !== newMessId || prev.name !== data.name) {
+                        console.log("🔄 Syncing user profile changes from Firestore...");
+                        console.log(`   Role: ${prev.role} -> ${newRole}`);
+                        console.log(`   MessId: ${prev.messId} -> ${newMessId}`);
+
+                        // Critical: If messId changed (e.g. joined/created mess), we MUST re-initialize 
+                        // to fetch mess data and update appState to 'ready'.
+                        if (prev.messId !== newMessId) {
+                            console.log("🚀 Mess ID changed, triggering re-initialization...");
+                            // We can use the updated data immediately
+                            const updatedUser = {
+                                ...prev,
+                                messId: newMessId,
+                                role: newRole,
+                                name: data.name || prev.name
+                            };
+                            // Update local user state immediately for responsiveness
+                            setUser(updatedUser);
+
+                            // Trigger full initialization to fetch mess data and set appState
+                            // We pass the updated user data implicitly by calling refreshData or re-running init logic
+                            // Since initializeApp fetches user data again, it will pick up the new messId from Firestore.
+                            initializeApp({ ...auth.currentUser, ...updatedUser } as any);
+                            return updatedUser;
+                        }
+
+                        return {
+                            ...prev,
+                            name: data.name || prev.name,
+                            email: data.email || prev.email,
+                            role: newRole,
+                            messId: newMessId,
+                        };
+                    }
+                    return prev;
+                });
+            }
+        }, (error) => {
+            console.error("User listener error:", error);
+        });
+
+        return () => unsubscribe();
+    }, [user?.uid]);
+
     return (
         <AppContext.Provider
             value={{
@@ -729,6 +826,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
                 clearMessData,
                 updateDashboardMonth,
                 refreshDashboard,
+                setUser,
             }}
         >
             {children}

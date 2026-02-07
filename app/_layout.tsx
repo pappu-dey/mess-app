@@ -66,7 +66,7 @@ function ProtectedStack() {
     // If they try to go to join/create, redirect back to dashboard? 
     // Maybe allow them to create IF we supported multiple messes, but we don't.
     // So enforcing dashboard is good.
-    if (appState === "ready" && (segments[1] === "join" || segments[1] === "create")) {
+    if (appState === "ready" && (segments[1] === "join" || segments[1] === "create" || segments[1] === "select")) {
       console.log("Redirecting to dashboard");
       router.replace("/mess/dashboard");
       return;

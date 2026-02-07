@@ -9,12 +9,39 @@ import {
   getDocs,
   increment,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
-  where,
+  where
 } from "firebase/firestore";
 import { AlertCircle, Check, Crown, Eye, Hash, Mail, Search, Trash2, User, UserPlus, X } from "lucide-react-native";
+import Svg, { Defs, LinearGradient, Path, Stop } from "react-native-svg";
+
+// ... existing imports ...
+
+// ─── Custom Manager Icon ───
+const ManagerCrown = ({ size = 20 }: { size?: number }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Defs>
+      <LinearGradient id="crownGrad" x1="12" y1="2" x2="12" y2="22" gradientUnits="userSpaceOnUse">
+        <Stop offset="0" stopColor="#FACC15" />
+        <Stop offset="1" stopColor="#EAB308" />
+      </LinearGradient>
+    </Defs>
+    <Path
+      d="M2 4L5 20H19L22 4L15.5 10L12 2L8.5 10L2 4Z"
+      fill="url(#crownGrad)"
+      stroke="#B45309"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Svg>
+);
+
+
+
 
 import { useCallback, useEffect, useState } from "react";
 
@@ -38,8 +65,6 @@ import { auth, db } from "../../firebase/firebaseConfig";
 
 type Role = "member" | "manager";
 type SearchMode = "email" | "userId";
-// Controls which screen the NEW_USER flow is on
-
 
 interface Member {
   id: string;
@@ -73,6 +98,10 @@ export default function MembersScreen() {
   const [addingMember, setAddingMember] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
 
+  // ── Success popup state ──
+  const [showSuccessPopup, setShowSuccessPopup] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
+
   // ── NEW_USER two-step state ──
   const [newMemberName, setNewMemberName] = useState("");
   const [nameError, setNameError] = useState("");
@@ -80,6 +109,7 @@ export default function MembersScreen() {
   // ── Animations ──
   const resultFadeIn = new Animated.Value(0);
   const resultSlideUp = new Animated.Value(12);
+  const successScale = new Animated.Value(0);
 
   useEffect(() => {
     setLoading(false);
@@ -96,6 +126,19 @@ export default function MembersScreen() {
       ]).start();
     }
   }, [searchResult, searchLoading]);
+
+  // Animate success popup
+  useEffect(() => {
+    if (showSuccessPopup) {
+      successScale.setValue(0);
+      Animated.spring(successScale, {
+        toValue: 1,
+        tension: 80,
+        friction: 8,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [showSuccessPopup]);
 
   // Debounced search
   useEffect(() => {
@@ -133,7 +176,6 @@ export default function MembersScreen() {
     setNewMemberName("");
     setSearchMode("email");
     setSearchFocused(false);
-    setSearchFocused(false);
     setNameError("");
   };
 
@@ -155,7 +197,6 @@ export default function MembersScreen() {
     setSearchLoading(true);
     setSearchError("");
     setSearchResult(null);
-    setNewMemberName("");
     setNewMemberName("");
     setNameError("");
 
@@ -219,8 +260,6 @@ export default function MembersScreen() {
     }
   };
 
-
-
   // ─── ADD MEMBER ─────────────────────────────────────────────────
   const handleAddMember = async () => {
     if (!searchResult || !mess?.id || !user) return;
@@ -257,7 +296,6 @@ export default function MembersScreen() {
         return;
       }
 
-
       if (searchResult.id !== "NEW_USER") {
         // Existing app user
         await updateDoc(doc(db, "users", searchResult.id), { messId: mess.id, role: "member" });
@@ -283,9 +321,14 @@ export default function MembersScreen() {
       await updateDoc(doc(db, "messes", mess.id), { memberCount: increment(1) });
       await refreshData();
 
-      Alert.alert("Success", `${finalName} has been added to the mess.`);
+      // Show success popup instead of Alert
+      setSuccessMessage(`${finalName} has been added to the mess.`);
       setShowAddModal(false);
       resetModalState();
+      setShowSuccessPopup(true);
+
+      // Auto-hide after 2.5 seconds
+      setTimeout(() => setShowSuccessPopup(false), 2500);
     } catch (error: any) {
       console.error("Add member error:", error);
       Alert.alert("Error", `Failed to add member: ${error.message}`);
@@ -293,33 +336,66 @@ export default function MembersScreen() {
       setAddingMember(false);
     }
   };
-
   // ─── TRANSFER & DELETE ──────────────────────────────────────────
-  const transferManagership = (member: Member) => {
-    if (user?.role !== "manager") {
-      Alert.alert("Access Denied", "Only managers can transfer managership");
+  const transferManagership = async (member: Member) => {
+    if (!mess?.id || !user) return;
+
+    if (member.id === user.uid) {
+      Alert.alert("Error", "You are already the manager.");
       return;
     }
+
     Alert.alert(
-      "Transfer Managership",
-      `Are you sure you want to transfer managership to ${member.name}? You will become a regular member.`,
+      "Confirm Transfer",
+      `Are you sure you want to make ${member.name} the new Manager? You will become a regular member.`,
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Transfer", style: "destructive",
+          text: "Transfer",
+          style: "destructive",
           onPress: async () => {
+            setLoading(true);
             try {
-              const currentUser = auth.currentUser;
-              if (!currentUser || !mess?.id) return;
-              await updateDoc(doc(db, "users", member.id), { role: "manager" });
-              await updateDoc(doc(db, "users", currentUser.uid), { role: "member" });
+              await runTransaction(db, async (transaction) => {
+                // 1. References
+                const messRef = doc(db, "messes", mess.id);
+                const currentUserRef = doc(db, "users", user.uid);
+                const newManagerRef = doc(db, "users", member.id);
+                const currentMemberRef = doc(db, "messes", mess.id, "members", user.uid);
+                const newMemberRef = doc(db, "messes", mess.id, "members", member.id);
+
+                // 2. Reads (Consistency Check)
+                const messDoc = await transaction.get(messRef);
+                if (!messDoc.exists()) throw "Mess not found.";
+                if (messDoc.data().managerId !== user.uid) throw "You are no longer the manager.";
+
+                // 3. Writes
+                // A. Update Mess Metadata
+                transaction.update(messRef, {
+                  managerId: member.id,
+                  managerName: member.name
+                });
+
+                // B. Update Global User Roles
+                transaction.update(currentUserRef, { role: "member" });
+                transaction.update(newManagerRef, { role: "manager" });
+
+                // C. Update Member Subcollection Roles
+                transaction.update(currentMemberRef, { role: "member" });
+                transaction.update(newMemberRef, { role: "manager" });
+              });
+
               await refreshData();
-              Alert.alert("Success", `${member.name} is now the manager. You are now a member.`, [
-                { text: "OK", onPress: () => router.back() },
+
+              Alert.alert("Success", `${member.name} is now the manager.`, [
+                { text: "OK", onPress: () => router.replace("/mess/dashboard") }
               ]);
-            } catch (error) {
-              console.error("Transfer managership error:", error);
-              Alert.alert("Error", "Failed to transfer managership");
+
+            } catch (error: any) {
+              console.error("Transfer error:", error);
+              Alert.alert("Transfer Failed", typeof error === 'string' ? error : error.message || "Unknown error occurred");
+            } finally {
+              setLoading(false);
             }
           },
         },
@@ -354,7 +430,7 @@ export default function MembersScreen() {
                 // Ignore if user doc doesn't exist (e.g. pending member)
                 console.log("Skipping user doc update for pending member");
               }
-              // CRITICAL FIX: Delete the member document so they are not found in global searches
+              // Delete the member document
               await deleteDoc(doc(db, "messes", mess.id, "members", memberId));
               await updateDoc(doc(db, "messes", mess.id), { memberCount: increment(-1) });
               await refreshData();
@@ -378,7 +454,7 @@ export default function MembersScreen() {
     !searchResult ||
     searchResult.alreadyInMess ||
     addingMember ||
-    (isNewUser && false); // ALWAYS ENABLE button for new users so they can get the alert feedback
+    (isNewUser && false);
 
   // ─── RENDER ─────────────────────────────────────────────────────
   if (!user || !mess) {
@@ -392,11 +468,11 @@ export default function MembersScreen() {
 
   const currentUserRole = user.role || "member";
 
-  // ── What the bottom button says / does ──
   const getButtonLabel = () => {
     if (isNewUser) return "Create & Add Member";
     return "Add Member";
   };
+
   const handleBottomButton = () => {
     handleAddMember();
   };
@@ -438,9 +514,13 @@ export default function MembersScreen() {
         }
         renderItem={({ item, index }) => {
           const isCurrentUser = item.id === auth.currentUser?.uid;
-          const isManager = item.role === "manager";
+
+          // FIXED: Use item.role from members subcollection as the source of truth for ALL members
+          // This ensures the manager tag displays correctly for everyone and updates immediately after transfer
+          const showManagerTag = item.role === "manager";
+
           return (
-            <View style={[styles.memberRow, isCurrentUser && styles.currentUserRow, isManager && styles.managerRow]}>
+            <View style={[styles.memberRow, isCurrentUser && styles.currentUserRow, showManagerTag && styles.managerRow]}>
               <View style={styles.rowTop}>
                 <View style={styles.memberInfo}>
                   <View style={styles.nameRow}>
@@ -448,9 +528,9 @@ export default function MembersScreen() {
                       {index + 1}. {item.name}
                       {isCurrentUser && <Text style={styles.youTag}> (You)</Text>}
                     </Text>
-                    {isManager && (
+                    {showManagerTag && (
                       <View style={styles.managerBadge}>
-                        <Crown size={14} color="#FACC15" />
+                        <ManagerCrown size={14} />
                         <Text style={styles.managerBadgeText}>Manager</Text>
                       </View>
                     )}
@@ -459,7 +539,7 @@ export default function MembersScreen() {
                 </View>
                 {currentUserRole === "manager" && (
                   <View style={styles.actionButtons}>
-                    {!isManager && (
+                    {!showManagerTag && (
                       <>
                         <TouchableOpacity onPress={() => transferManagership(item)} style={styles.transferButton} activeOpacity={0.7}>
                           <Crown size={18} color="#FACC15" />
@@ -476,6 +556,19 @@ export default function MembersScreen() {
           );
         }}
       />
+
+      {/* ── SUCCESS POPUP (Centered) ── */}
+      <Modal visible={showSuccessPopup} transparent animationType="fade" onRequestClose={() => setShowSuccessPopup(false)}>
+        <View style={styles.successOverlay}>
+          <Animated.View style={[styles.successPopup, { transform: [{ scale: successScale }] }]}>
+            <View style={styles.successIconContainer}>
+              <Check size={32} color="#34D399" strokeWidth={3} />
+            </View>
+            <Text style={styles.successTitle}>Success!</Text>
+            <Text style={styles.successText}>{successMessage}</Text>
+          </Animated.View>
+        </View>
+      </Modal>
 
       {/* ── ADD MEMBER MODAL ── */}
       <Modal visible={showAddModal} transparent animationType="slide" onRequestClose={() => { setShowAddModal(false); resetModalState(); }}>
@@ -504,146 +597,139 @@ export default function MembersScreen() {
             <View style={styles.divider} />
 
             {/* ── Show search UI ── */}
-            {(
-              <>
-                {/* Toggle */}
-                <View style={styles.toggleContainer}>
-                  <TouchableOpacity
-                    style={[styles.toggleOption, searchMode === "email" && styles.toggleOptionActive]}
-                    onPress={() => { setSearchMode("email"); setSearchInput(""); setSearchResult(null); setSearchError(""); setNewMemberName(""); setNameError(""); }}
-                    activeOpacity={0.7}
-                  >
-                    <Mail size={15} color={searchMode === "email" ? "#FFF" : "#64748B"} />
-                    <Text style={[styles.toggleText, searchMode === "email" && styles.toggleTextActive]}>Email</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.toggleOption, searchMode === "userId" && styles.toggleOptionActive]}
-                    onPress={() => { setSearchMode("userId"); setSearchInput(""); setSearchResult(null); setSearchError(""); setNewMemberName(""); setNameError(""); }}
-                    activeOpacity={0.7}
-                  >
-                    <Hash size={15} color={searchMode === "userId" ? "#FFF" : "#64748B"} />
-                    <Text style={[styles.toggleText, searchMode === "userId" && styles.toggleTextActive]}>User ID</Text>
-                  </TouchableOpacity>
-                </View>
+            <>
+              {/* Toggle */}
+              <View style={styles.toggleContainer}>
+                <TouchableOpacity
+                  style={[styles.toggleOption, searchMode === "email" && styles.toggleOptionActive]}
+                  onPress={() => { setSearchMode("email"); setSearchInput(""); setSearchResult(null); setSearchError(""); setNewMemberName(""); setNameError(""); }}
+                  activeOpacity={0.7}
+                >
+                  <Mail size={15} color={searchMode === "email" ? "#FFF" : "#64748B"} />
+                  <Text style={[styles.toggleText, searchMode === "email" && styles.toggleTextActive]}>Email</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.toggleOption, searchMode === "userId" && styles.toggleOptionActive]}
+                  onPress={() => { setSearchMode("userId"); setSearchInput(""); setSearchResult(null); setSearchError(""); setNewMemberName(""); setNameError(""); }}
+                  activeOpacity={0.7}
+                >
+                  <Hash size={15} color={searchMode === "userId" ? "#FFF" : "#64748B"} />
+                  <Text style={[styles.toggleText, searchMode === "userId" && styles.toggleTextActive]}>User ID</Text>
+                </TouchableOpacity>
+              </View>
 
-                {/* Search Input */}
-                <View style={[styles.searchInputWrapper, searchFocused && styles.searchInputWrapperFocused]}>
-                  <Search size={18} color={searchFocused ? "#6366F1" : "#64748B"} />
-                  <TextInput
-                    style={styles.searchInput}
-                    placeholder={searchMode === "email" ? "Email address" : "User ID"}
-                    placeholderTextColor="#475569"
-                    value={searchInput}
-                    onChangeText={setSearchInput}
-                    onFocus={() => setSearchFocused(true)}
-                    onBlur={() => setSearchFocused(false)}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    keyboardType={searchMode === "email" ? "email-address" : "default"}
-                    editable={!addingMember}
-                  />
-                  {searchInput.length > 0 && (
-                    <TouchableOpacity onPress={() => { setSearchInput(""); setSearchResult(null); setSearchError(""); }} activeOpacity={0.6} style={styles.clearButton}>
-                      <X size={14} color="#64748B" />
-                    </TouchableOpacity>
+              {/* Search Input */}
+              <View style={[styles.searchInputWrapper, searchFocused && styles.searchInputWrapperFocused]}>
+                <Search size={18} color={searchFocused ? "#6366F1" : "#64748B"} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder={searchMode === "email" ? "Email address" : "User ID"}
+                  placeholderTextColor="#475569"
+                  value={searchInput}
+                  onChangeText={setSearchInput}
+                  onFocus={() => setSearchFocused(true)}
+                  onBlur={() => setSearchFocused(false)}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType={searchMode === "email" ? "email-address" : "default"}
+                  editable={!addingMember}
+                />
+                {searchInput.length > 0 && (
+                  <TouchableOpacity onPress={() => { setSearchInput(""); setSearchResult(null); setSearchError(""); }} activeOpacity={0.6} style={styles.clearButton}>
+                    <X size={14} color="#64748B" />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Searching… */}
+              {searchLoading && (
+                <View style={styles.searchStateContainer}>
+                  <ActivityIndicator size="small" color="#6366F1" />
+                  <Text style={styles.searchStateText}>Searching...</Text>
+                </View>
+              )}
+
+              {/* Search error */}
+              {searchError && !searchLoading && (
+                <View style={styles.errorContainer}>
+                  <View style={styles.errorIconWrap}><AlertCircle size={15} color="#EF4444" /></View>
+                  <Text style={styles.errorText}>{searchError}</Text>
+                </View>
+              )}
+
+              {/* ── REGISTERED USER result card ── */}
+              {isRegistered && !searchLoading && (
+                <Animated.View style={[styles.resultCard, searchResult!.alreadyInMess && styles.resultCardDisabled, { opacity: resultFadeIn, transform: [{ translateY: resultSlideUp }] }]}>
+                  <View style={styles.resultAvatar}>
+                    <Text style={styles.resultAvatarText}>{searchResult!.name.charAt(0).toUpperCase()}</Text>
+                  </View>
+                  <View style={styles.resultInfo}>
+                    <Text style={styles.resultName}>{searchResult!.name}</Text>
+                    <Text style={styles.resultEmail}>{searchResult!.email}</Text>
+                  </View>
+                  {searchResult!.alreadyInMess && (
+                    <View style={styles.alreadyBadge}><Check size={13} color="#F59E0B" /></View>
+                  )}
+                </Animated.View>
+              )}
+              {isRegistered && searchResult!.alreadyInMess && (
+                <Text style={styles.alreadyInMessText}>This person is already in your mess</Text>
+              )}
+
+              {/* ── NEW_USER  ─  Name entry ── */}
+              {isNewUser && !searchLoading && (
+                <View style={styles.newUserNameCard}>
+                  {/* header row: icon + label */}
+                  <View style={styles.newUserHeaderRow}>
+                    <View style={styles.newUserIconWrap}>
+                      <User size={18} color="#818CF8" />
+                    </View>
+                    <View style={styles.newUserHeaderText}>
+                      <Text style={styles.newUserTitle}>Not found in the app</Text>
+                      <Text style={styles.newUserSubtitle}>This email is not registered. Enter a name to add them as a pending member.</Text>
+                    </View>
+                  </View>
+
+                  {/* email chip */}
+                  <View style={styles.emailChipRow}>
+                    <Mail size={13} color="#64748B" />
+                    <Text style={styles.emailChipText}>{searchResult!.email}</Text>
+                  </View>
+
+                  {/* name input */}
+                  <Text style={styles.nameFieldLabel}>Full Name</Text>
+                  <View style={[styles.nameInputWrapper, nameError && styles.nameInputWrapperError]}>
+                    <TextInput
+                      style={styles.nameInputField}
+                      placeholder="e.g. John Doe"
+                      placeholderTextColor="#475569"
+                      value={newMemberName}
+                      onChangeText={(t) => { setNewMemberName(t); setNameError(validateName(t)); }}
+                      autoFocus
+                    />
+                  </View>
+                  {nameError ? (
+                    <View style={styles.inlineErrorRow}>
+                      <AlertCircle size={13} color="#EF4444" />
+                      <Text style={styles.inlineErrorText}>{nameError}</Text>
+                    </View>
+                  ) : newMemberName.trim().length >= 3 ? (
+                    <View style={styles.inlineOkRow}>
+                      <Check size={13} color="#34D399" />
+                      <Text style={styles.inlineOkText}>Name looks good</Text>
+                    </View>
+                  ) : null}
+
+                  {/* already-in-mess warning */}
+                  {searchResult!.alreadyInMess && (
+                    <View style={[styles.errorContainer, { marginTop: 10 }]}>
+                      <View style={styles.errorIconWrap}><AlertCircle size={15} color="#EF4444" /></View>
+                      <Text style={styles.errorText}>This person is already in your mess</Text>
+                    </View>
                   )}
                 </View>
-
-                {/* Searching… */}
-                {searchLoading && (
-                  <View style={styles.searchStateContainer}>
-                    <ActivityIndicator size="small" color="#6366F1" />
-                    <Text style={styles.searchStateText}>Searching...</Text>
-                  </View>
-                )}
-
-                {/* Search error */}
-                {searchError && !searchLoading && (
-                  <View style={styles.errorContainer}>
-                    <View style={styles.errorIconWrap}><AlertCircle size={15} color="#EF4444" /></View>
-                    <Text style={styles.errorText}>{searchError}</Text>
-                  </View>
-                )}
-
-                {/* ── REGISTERED USER result card ── */}
-                {isRegistered && !searchLoading && (
-                  <Animated.View style={[styles.resultCard, searchResult!.alreadyInMess && styles.resultCardDisabled, { opacity: resultFadeIn, transform: [{ translateY: resultSlideUp }] }]}>
-                    <View style={styles.resultAvatar}>
-                      <Text style={styles.resultAvatarText}>{searchResult!.name.charAt(0).toUpperCase()}</Text>
-                    </View>
-                    <View style={styles.resultInfo}>
-                      <Text style={styles.resultName}>{searchResult!.name}</Text>
-                      <Text style={styles.resultEmail}>{searchResult!.email}</Text>
-                    </View>
-                    {searchResult!.alreadyInMess && (
-                      <View style={styles.alreadyBadge}><Check size={13} color="#F59E0B" /></View>
-                    )}
-                  </Animated.View>
-                )}
-                {isRegistered && searchResult!.alreadyInMess && (
-                  <Text style={styles.alreadyInMessText}>This person is already in your mess</Text>
-                )}
-
-                {/* ── NEW_USER  ─  Step 1: Name entry ── */}
-                {isNewUser && !searchLoading && (
-                  <View style={styles.newUserNameCard}>
-                    {/* header row: icon + label */}
-                    <View style={styles.newUserHeaderRow}>
-                      <View style={styles.newUserIconWrap}>
-                        <User size={18} color="#818CF8" />
-                      </View>
-                      <View style={styles.newUserHeaderText}>
-                        <Text style={styles.newUserTitle}>Not found in the app</Text>
-                        <Text style={styles.newUserSubtitle}>This email is not registered. Enter a name to add them as a pending member.</Text>
-                      </View>
-                    </View>
-
-                    {/* email chip */}
-                    <View style={styles.emailChipRow}>
-                      <Mail size={13} color="#64748B" />
-                      <Text style={styles.emailChipText}>{searchResult!.email}</Text>
-                    </View>
-
-                    {/* step pills removed */}
-
-                    {/* name input */}
-                    <Text style={styles.nameFieldLabel}>Full Name</Text>
-                    <View style={[styles.nameInputWrapper, nameError && styles.nameInputWrapperError]}>
-                      <TextInput
-                        style={styles.nameInputField}
-                        placeholder="e.g. John Doe"
-                        placeholderTextColor="#475569"
-                        value={newMemberName}
-                        onChangeText={(t) => { setNewMemberName(t); setNameError(validateName(t)); }}
-                        autoFocus
-                      />
-                    </View>
-                    {nameError ? (
-                      <View style={styles.inlineErrorRow}>
-                        <AlertCircle size={13} color="#EF4444" />
-                        <Text style={styles.inlineErrorText}>{nameError}</Text>
-                      </View>
-                    ) : newMemberName.trim().length >= 3 ? (
-                      <View style={styles.inlineOkRow}>
-                        <Check size={13} color="#34D399" />
-                        <Text style={styles.inlineOkText}>Name looks good</Text>
-                      </View>
-                    ) : null}
-
-                    {/* already-in-mess warning */}
-                    {searchResult!.alreadyInMess && (
-                      <View style={[styles.errorContainer, { marginTop: 10 }]}>
-                        <View style={styles.errorIconWrap}><AlertCircle size={15} color="#EF4444" /></View>
-                        <Text style={styles.errorText}>This person is already in your mess</Text>
-                      </View>
-                    )}
-                  </View>
-                )}
-              </>
-            )}
-
-            {/* ── NEW_USER  ─  Step 2: Review card ── */}
-
+              )}
+            </>
 
             {/* ── Bottom button ── */}
             <View style={{ height: 12 }} />
@@ -708,6 +794,13 @@ const styles = StyleSheet.create({
   emptyText: { color: "#FFF", fontSize: 18, fontWeight: "600", marginBottom: 8 },
   emptySubtext: { color: "#94A3B8", fontSize: 14 },
 
+  // ── SUCCESS POPUP (Centered) ──
+  successOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "center", alignItems: "center", paddingHorizontal: 24 },
+  successPopup: { backgroundColor: "#1E293B", borderRadius: 20, padding: 28, alignItems: "center", width: "100%", maxWidth: 340, shadowColor: "#000", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.4, shadowRadius: 16, elevation: 12 },
+  successIconContainer: { width: 64, height: 64, borderRadius: 32, backgroundColor: "rgba(52,211,153,0.15)", alignItems: "center", justifyContent: "center", marginBottom: 16 },
+  successTitle: { color: "#FFF", fontSize: 20, fontWeight: "700", marginBottom: 8 },
+  successText: { color: "#94A3B8", fontSize: 14, textAlign: "center", lineHeight: 20 },
+
   // ── MODAL SHELL ──
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" },
   modalContent: { backgroundColor: "#1E293B", borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 24, paddingBottom: Platform.OS === "ios" ? 44 : 28, paddingTop: 8, shadowColor: "#000", shadowOffset: { width: 0, height: -8 }, shadowOpacity: 0.35, shadowRadius: 20, elevation: 20 },
@@ -754,7 +847,7 @@ const styles = StyleSheet.create({
   alreadyBadge: { width: 28, height: 28, borderRadius: 14, backgroundColor: "rgba(245,158,11,0.15)", borderWidth: 1, borderColor: "rgba(245,158,11,0.35)", alignItems: "center", justifyContent: "center", flexShrink: 0 },
   alreadyInMessText: { color: "#F59E0B", fontSize: 13, fontWeight: "600", textAlign: "center", marginTop: 6 },
 
-  // ── NEW USER  ─  Step 1: Name card ──
+  // ── NEW USER  ─  Name card ──
   newUserNameCard: {
     backgroundColor: "#0F172A",
     borderWidth: 1,
@@ -771,17 +864,6 @@ const styles = StyleSheet.create({
   emailChipRow: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "rgba(99,102,241,0.1)", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, marginBottom: 14, alignSelf: "flex-start" },
   emailChipText: { color: "#818CF8", fontSize: 13, fontWeight: "600" },
 
-  // Step pills
-  stepRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 16 },
-  stepPill: { width: 24, height: 24, borderRadius: 12, backgroundColor: "#1E293B", borderWidth: 1.5, borderColor: "#334155", alignItems: "center", justifyContent: "center" },
-  stepPillActive: { backgroundColor: "#6366F1", borderColor: "#6366F1" },
-  stepPillDone: { backgroundColor: "#6366F1", borderColor: "#6366F1" },
-  stepPillText: { color: "#64748B", fontSize: 11, fontWeight: "700" },
-  stepPillTextActive: { color: "#FFF", fontSize: 11, fontWeight: "700" },
-  stepLine: { width: 28, height: 2, backgroundColor: "#334155", borderRadius: 1 },
-  stepLineDone: { backgroundColor: "#6366F1" },
-  stepLabel: { color: "#64748B", fontSize: 12, fontWeight: "600", marginLeft: 4 },
-
   // Name input
   nameFieldLabel: { color: "#94A3B8", fontSize: 12, fontWeight: "600", marginBottom: 6 },
   nameInputWrapper: { backgroundColor: "#1E293B", borderRadius: 10, borderWidth: 1.5, borderColor: "#334155", paddingHorizontal: 14, marginBottom: 6 },
@@ -793,29 +875,6 @@ const styles = StyleSheet.create({
   inlineErrorText: { color: "#F87171", fontSize: 12 },
   inlineOkRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   inlineOkText: { color: "#34D399", fontSize: 12, fontWeight: "600" },
-
-  // ── NEW USER  ─  Step 2: Review ──
-  reviewWrapper: { paddingTop: 2 },
-  backRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 16 },
-  backText: { color: "#6366F1", fontSize: 14, fontWeight: "600" },
-
-  reviewCard: { backgroundColor: "#0F172A", borderRadius: 14, borderWidth: 1, borderColor: "#2E3A4F", overflow: "hidden", marginBottom: 14 },
-  reviewAvatar: { width: 56, height: 56, borderRadius: 28, backgroundColor: "#6366F1", alignItems: "center", justifyContent: "center", alignSelf: "center", marginTop: 18, marginBottom: 14, shadowColor: "#6366F1", shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.4, shadowRadius: 10, elevation: 4 },
-  reviewAvatarText: { color: "#FFF", fontSize: 22, fontWeight: "700" },
-
-  reviewRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 18, paddingVertical: 14 },
-  reviewRowIconWrap: { width: 32, height: 32, borderRadius: 8, backgroundColor: "rgba(100,116,139,0.12)", alignItems: "center", justifyContent: "center" },
-  reviewRowContent: { flex: 1 },
-  reviewRowLabel: { color: "#64748B", fontSize: 11, fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 },
-  reviewRowValue: { color: "#FFF", fontSize: 14, fontWeight: "600" },
-  reviewDivider: { height: 1, backgroundColor: "#1E293B", marginHorizontal: 18 },
-
-  pendingBadge: { alignSelf: "flex-start", backgroundColor: "rgba(245,158,11,0.12)", borderWidth: 1, borderColor: "rgba(245,158,11,0.3)", borderRadius: 6, paddingHorizontal: 10, paddingVertical: 3 },
-  pendingBadgeText: { color: "#F59E0B", fontSize: 12, fontWeight: "700" },
-
-  infoNote: { flexDirection: "row", gap: 10, backgroundColor: "rgba(100,116,139,0.08)", borderRadius: 10, borderWidth: 1, borderColor: "#2E3A4F", padding: 14 },
-  infoNoteText: { color: "#64748B", fontSize: 13, lineHeight: 19, flex: 1 },
-  infoNoteHighlight: { color: "#F59E0B", fontWeight: "700" },
 
   // ── Confirm Button ──
   confirmButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, backgroundColor: "#6366F1", paddingVertical: 15, borderRadius: 14, marginTop: 4, shadowColor: "#6366F1", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 10, elevation: 6 },

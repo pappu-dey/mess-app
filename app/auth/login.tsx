@@ -7,6 +7,7 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -30,6 +31,7 @@ export default function Login() {
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
   const buttonScale = useRef(new Animated.Value(1)).current;
   const shakeAnim = useRef(new Animated.Value(0)).current;
+  const keyboardOffset = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.parallel([
@@ -50,6 +52,34 @@ export default function Login() {
         useNativeDriver: true,
       }),
     ]).start();
+
+    // Keyboard listeners
+    const keyboardWillShow = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
+      (e) => {
+        Animated.timing(keyboardOffset, {
+          toValue: -e.endCoordinates.height * 0.15,
+          duration: Platform.OS === "ios" ? 250 : 200,
+          useNativeDriver: true,
+        }).start();
+      }
+    );
+
+    const keyboardWillHide = Keyboard.addListener(
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
+      () => {
+        Animated.timing(keyboardOffset, {
+          toValue: 0,
+          duration: Platform.OS === "ios" ? 250 : 200,
+          useNativeDriver: true,
+        }).start();
+      }
+    );
+
+    return () => {
+      keyboardWillShow.remove();
+      keyboardWillHide.remove();
+    };
   }, []);
 
   const shakeAnimation = () => {
@@ -77,6 +107,39 @@ export default function Login() {
     ]).start();
   };
 
+  const getUserFriendlyError = (errorCode: string): string => {
+    switch (errorCode) {
+      case "auth/invalid-credential":
+        return "The email or password you entered is incorrect. Please check and try again.";
+      case "auth/user-not-found":
+        return "We couldn't find an account with this email address. Please check your email or sign up.";
+      case "auth/wrong-password":
+        return "The password you entered is incorrect. Please try again or reset your password.";
+      case "auth/invalid-email":
+        return "Please enter a valid email address.";
+      case "auth/user-disabled":
+        return "This account has been disabled. Please contact support for help.";
+      case "auth/too-many-requests":
+        return "Too many failed attempts. Please wait a few minutes before trying again.";
+      case "auth/network-request-failed":
+        return "Unable to connect. Please check your internet connection and try again.";
+      case "auth/operation-not-allowed":
+        return "Email/password sign in is not enabled. Please contact support.";
+      case "auth/weak-password":
+        return "Your password is too weak. Please use a stronger password.";
+      case "auth/email-already-in-use":
+        return "An account with this email already exists. Please sign in instead.";
+      case "auth/requires-recent-login":
+        return "For security, please sign out and sign in again to continue.";
+      case "auth/expired-action-code":
+        return "This link has expired. Please request a new one.";
+      case "auth/invalid-action-code":
+        return "This link is invalid or has already been used.";
+      default:
+        return "Something went wrong while signing in. Please try again or contact support if the problem continues.";
+    }
+  };
+
   const handleLogin = async () => {
     if (isLoading) return;
 
@@ -88,63 +151,61 @@ export default function Login() {
       shakeAnimation();
       Alert.alert(
         "Missing Information",
-        "Please enter both email and password",
+        "Please enter both your email and password to continue."
+      );
+      return;
+    }
+
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmedEmail)) {
+      shakeAnimation();
+      Alert.alert(
+        "Invalid Email",
+        "Please enter a valid email address (e.g., example@email.com)."
       );
       return;
     }
 
     setIsLoading(true);
 
-    // 🔍 Debug logs
-    console.log("=== LOGIN ATTEMPT ===");
-    console.log("Email:", trimmedEmail);
-    console.log("Password length:", password.length);
-    console.log("Auth object:", auth);
-
     try {
       const userCredential = await signInWithEmailAndPassword(
         auth,
         trimmedEmail,
-        password,
+        password
       );
 
-      console.log("✅ LOGIN SUCCESS:", userCredential.user.email);
-      // _layout.tsx will handle navigation
+      // Success - navigation will be handled by _layout.tsx
+      console.log("Login successful for:", userCredential.user.email);
     } catch (error: any) {
       shakeAnimation();
 
-      // 🔍 Detailed error logging
-      console.error("=== LOGIN ERROR ===");
-      console.error("Full error:", error);
-      console.error("Error code:", error.code);
-      console.error("Error message:", error.message);
+      // Get user-friendly error message
+      const errorMessage = getUserFriendlyError(error?.code || "unknown");
 
-      let message = "Login failed. Please try again.";
-
-      switch (error.code) {
-        case "auth/user-not-found":
-          message = "No account found with this email!";
-          break;
-        case "auth/wrong-password":
-          message = "Incorrect password!";
-          break;
-        case "auth/invalid-email":
-          message = "Invalid email address!";
-          break;
-        case "auth/invalid-credential":
-          message = "Invalid email or password!";
-          break;
-        case "auth/too-many-requests":
-          message = "Too many attempts. Please try again later.";
-          break;
-        case "auth/network-request-failed":
-          message = "Network error. Check your internet connection.";
-          break;
-        default:
-          message = `Error (${error.code}): ${error.message}`;
+      // Log for debugging (only in development)
+      if (__DEV__) {
+        console.log("Login error code:", error?.code);
       }
 
-      Alert.alert("Login Failed", message);
+      // Show user-friendly error
+      Alert.alert("Unable to Sign In", errorMessage, [
+        {
+          text: "OK",
+          style: "default" as const,
+        },
+        ...(error?.code === "auth/wrong-password" ||
+          error?.code === "auth/invalid-credential"
+          ? [
+            {
+              text: "Reset Password",
+              onPress: () => router.push("/auth/forgot"),
+              style: "cancel" as const,
+            },
+          ]
+          : []),
+      ]);
     } finally {
       setIsLoading(false);
     }
@@ -152,133 +213,149 @@ export default function Login() {
 
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.container}
-        keyboardVerticalOffset={0}
-      >
+      <View style={styles.container}>
         <View style={styles.gradientBackground}>
           <View style={styles.circle1} />
           <View style={styles.circle2} />
           <View style={styles.circle3} />
         </View>
 
-        <Animated.View
-          style={[
-            styles.content,
-            {
-              opacity: fadeAnim,
-              transform: [
-                { translateY: slideAnim },
-                { scale: scaleAnim },
-                { translateX: shakeAnim },
-              ],
-            },
-          ]}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={styles.keyboardView}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
         >
-          <View style={styles.header}>
-            <View style={styles.logoContainer}>
-              <View style={styles.logoInner}>
-                <View style={styles.logoShape1} />
-                <View style={styles.logoShape2} />
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <Animated.View
+              style={[
+                styles.content,
+                {
+                  opacity: fadeAnim,
+                  transform: [
+                    { translateY: Animated.add(slideAnim, keyboardOffset) },
+                    { scale: scaleAnim },
+                    { translateX: shakeAnim },
+                  ],
+                },
+              ]}
+            >
+              <View style={styles.header}>
+                <View style={styles.logoContainer}>
+                  <View style={styles.logoInner}>
+                    <View style={styles.logoShape1} />
+                    <View style={styles.logoShape2} />
+                  </View>
+                </View>
+                <Text style={styles.title}>Mess Manager</Text>
+                <Text style={styles.subtitle}>
+                  Streamline your mess operations with ease
+                </Text>
               </View>
-            </View>
-            <Text style={styles.title}>Mess Manager</Text>
-            <Text style={styles.subtitle}>
-              Streamline your mess operations with ease
-            </Text>
-          </View>
 
-          <View style={styles.form}>
-            <View
-              style={[
-                styles.inputContainer,
-                focusedInput === "email" && styles.inputFocused,
-              ]}
-            >
-              <Text style={styles.inputLabel}>EMAIL ADDRESS</Text>
-              <TextInput
-                placeholder="Enter your email"
-                placeholderTextColor="#64748B"
-                style={styles.input}
-                value={email}
-                onChangeText={setEmail}
-                onFocus={() => setFocusedInput("email")}
-                onBlur={() => setFocusedInput(null)}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                editable={!isLoading}
-                returnKeyType="next"
-              />
-            </View>
-
-            <View
-              style={[
-                styles.inputContainer,
-                focusedInput === "password" && styles.inputFocused,
-              ]}
-            >
-              <View style={styles.inputHeader}>
-                <Text style={styles.inputLabel}>PASSWORD</Text>
-                <TouchableOpacity
-                  onPress={() => setShowPassword(!showPassword)}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              <View style={styles.form}>
+                <View
+                  style={[
+                    styles.inputContainer,
+                    focusedInput === "email" && styles.inputFocused,
+                  ]}
                 >
-                  <Text style={styles.togglePassword}>
-                    {showPassword ? "HIDE" : "SHOW"}
+                  <Text style={styles.inputLabel}>EMAIL ADDRESS</Text>
+                  <TextInput
+                    placeholder="Enter your email"
+                    placeholderTextColor="#64748B"
+                    style={styles.input}
+                    value={email}
+                    onChangeText={setEmail}
+                    onFocus={() => setFocusedInput("email")}
+                    onBlur={() => setFocusedInput(null)}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!isLoading}
+                    returnKeyType="next"
+                  />
+                </View>
+
+                <View
+                  style={[
+                    styles.inputContainer,
+                    focusedInput === "password" && styles.inputFocused,
+                  ]}
+                >
+                  <View style={styles.inputHeader}>
+                    <Text style={styles.inputLabel}>PASSWORD</Text>
+                    <TouchableOpacity
+                      onPress={() => setShowPassword(!showPassword)}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      disabled={isLoading}
+                    >
+                      <Text style={styles.togglePassword}>
+                        {showPassword ? "HIDE" : "SHOW"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TextInput
+                    placeholder="Enter your password"
+                    placeholderTextColor="#64748B"
+                    style={styles.input}
+                    secureTextEntry={!showPassword}
+                    value={password}
+                    onChangeText={setPassword}
+                    onFocus={() => setFocusedInput("password")}
+                    onBlur={() => setFocusedInput(null)}
+                    editable={!isLoading}
+                    returnKeyType="done"
+                    onSubmitEditing={handleLogin}
+                  />
+                </View>
+
+                <TouchableOpacity
+                  style={styles.forgotPassword}
+                  onPress={() => router.push("/auth/forgot")}
+                  disabled={isLoading}
+                >
+                  <Text style={styles.forgotPasswordText}>
+                    Forgot Password?
                   </Text>
                 </TouchableOpacity>
+
+                <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+                  <TouchableOpacity
+                    style={[styles.button, isLoading && styles.buttonLoading]}
+                    onPress={handleLogin}
+                    activeOpacity={0.8}
+                    disabled={isLoading}
+                  >
+                    <Text style={styles.buttonText}>
+                      {isLoading ? "SIGNING IN..." : "SIGN IN"}
+                    </Text>
+                  </TouchableOpacity>
+                </Animated.View>
+
+                <View style={styles.divider}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>OR</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+
+                <View style={styles.footer}>
+                  <Text style={styles.footerText}>Don't have an account? </Text>
+                  <TouchableOpacity
+                    onPress={() => router.push("/auth/register")}
+                    disabled={isLoading}
+                  >
+                    <Text style={styles.link}>Sign Up</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-              <TextInput
-                placeholder="Enter your password"
-                placeholderTextColor="#64748B"
-                style={styles.input}
-                secureTextEntry={!showPassword}
-                value={password}
-                onChangeText={setPassword}
-                onFocus={() => setFocusedInput("password")}
-                onBlur={() => setFocusedInput(null)}
-                editable={!isLoading}
-                returnKeyType="done"
-                onSubmitEditing={handleLogin}
-              />
-            </View>
-
-            <TouchableOpacity
-              style={styles.forgotPassword}
-              onPress={() => router.push("/auth/forgot")}
-            >
-              <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-            </TouchableOpacity>
-
-            <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
-              <TouchableOpacity
-                style={[styles.button, isLoading && styles.buttonLoading]}
-                onPress={handleLogin}
-                activeOpacity={0.8}
-                disabled={isLoading}
-              >
-                <Text style={styles.buttonText}>
-                  {isLoading ? "SIGNING IN..." : "SIGN IN"}
-                </Text>
-              </TouchableOpacity>
             </Animated.View>
-
-            <View style={styles.divider}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>OR</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            <View style={styles.footer}>
-              <Text style={styles.footerText}>Don't have an account? </Text>
-              <TouchableOpacity onPress={() => router.push("/auth/register")}>
-                <Text style={styles.link}>Sign Up</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Animated.View>
-      </KeyboardAvoidingView>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </View>
     </TouchableWithoutFeedback>
   );
 }
@@ -320,8 +397,14 @@ const styles = StyleSheet.create({
     top: "45%",
     right: -60,
   },
-  content: {
+  keyboardView: {
     flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: "center",
+  },
+  content: {
     padding: 24,
     justifyContent: "center",
   },

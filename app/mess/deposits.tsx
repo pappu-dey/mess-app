@@ -714,10 +714,11 @@ const styles = StyleSheet.create({
   },
   errorSubtext: { color: "#94A3B8", fontSize: 14, textAlign: "center" },
   header: {
-    fontSize: 28,
+    fontSize: 18,
     fontWeight: "800",
     color: "#FFF",
     marginBottom: 4,
+    marginTop: 20,
   },
   subHeader: { fontSize: 14, color: "#94A3B8", marginBottom: 20 },
   monthSelectorContainer: {

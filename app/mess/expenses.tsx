@@ -1,6 +1,6 @@
 // Expenses.tsx - Fixed and Improved Version
 import { format } from "date-fns";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   addDoc,
   collection,
@@ -15,6 +15,7 @@ import {
   updateDoc,
   where
 } from "firebase/firestore";
+import { ClipboardList } from "lucide-react-native";
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -62,6 +63,7 @@ type ExpenseItem = {
 export default function Expenses() {
   /* ================= CONTEXT ================= */
   const params = useLocalSearchParams();
+  const router = useRouter();
   const { refreshDashboard } = useApp();
   const { user, activeMessId } = useAuth();
   const isManager = user?.role === "manager";
@@ -82,6 +84,7 @@ export default function Expenses() {
   const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [totalExpenses, setTotalExpenses] = useState(0);
+  const [pendingRequestsCount, setPendingRequestsCount] = useState(0);
 
   const [showModal, setShowModal] = useState(false);
   const [amount, setAmount] = useState("");
@@ -106,6 +109,34 @@ export default function Expenses() {
   /* ================= FIRESTORE PATH ================= */
   const monthRef = doc(db, "messes", activeMessId, "managerMoney", monthId);
   const expensesRef = collection(monthRef, "entries");
+
+  /* ================= FETCH PENDING REQUESTS COUNT (MANAGER ONLY) ================= */
+  useEffect(() => {
+    if (!activeMessId || !isManager) return;
+
+    const requestsRef = collection(
+      db,
+      "messes",
+      activeMessId,
+      "managerMoney",
+      monthId,
+      "expense_requests"
+    );
+
+    const q = query(requestsRef, where("status", "==", "pending"));
+
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        setPendingRequestsCount(snap.size);
+      },
+      (error) => {
+        console.error("Error fetching pending requests count:", error);
+      }
+    );
+
+    return () => unsub();
+  }, [activeMessId, monthId, isManager]);
 
   /* ================= FETCH EXPENSES ================= */
   useEffect(() => {
@@ -348,6 +379,14 @@ export default function Expenses() {
     setShowActionMenu(true);
   };
 
+  /* ================= NAVIGATION ================= */
+  const navigateToExpenseRequests = () => {
+    router.push({
+      pathname: "/mess/expense_requests",
+      params: { messId: activeMessId, monthId },
+    });
+  };
+
   /* ================= DATE NAVIGATION ================= */
   const adjustDate = (days: number) => {
     const newDate = new Date(selectedDate);
@@ -485,15 +524,36 @@ export default function Expenses() {
         )}
       />
 
-      {/* Add Expense Button (Manager Only) */}
+      {/* Floating Action Buttons (Manager Only) */}
       {isManager && (
-        <TouchableOpacity
-          style={styles.fab}
-          onPress={() => setShowModal(true)}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.fabText}>＋</Text>
-        </TouchableOpacity>
+        <View style={styles.fabContainer}>
+          {/* Approve Requests Button */}
+          <TouchableOpacity
+            style={styles.approveRequestsFab}
+            onPress={navigateToExpenseRequests}
+            activeOpacity={0.8}
+          >
+            {pendingRequestsCount > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{pendingRequestsCount}</Text>
+              </View>
+            )}
+
+            {/* Lucide SVG Icon */}
+            <ClipboardList size={22} color="#fff" strokeWidth={2} />
+
+            <Text style={styles.approveRequestsLabel}>Requests</Text>
+          </TouchableOpacity>
+
+          {/* Add Expense Button */}
+          <TouchableOpacity
+            style={styles.fab}
+            onPress={() => setShowModal(true)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.fabText}>＋</Text>
+          </TouchableOpacity>
+        </View>
       )}
 
       {/* Add/Edit Modal (Manager Only) */}
@@ -697,10 +757,11 @@ const styles = StyleSheet.create({
   },
 
   header: {
-    fontSize: 28,
+    fontSize: 18,
     fontWeight: "800",
     color: "#FFF",
     marginBottom: 4,
+    marginTop: 20,
   },
   subHeader: { fontSize: 14, color: "#94A3B8", marginBottom: 20 },
   monthSelectorContainer: {
@@ -839,10 +900,57 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
   },
 
-  fab: {
+  fabContainer: {
     position: "absolute",
     bottom: 50,
     right: 24,
+    flexDirection: "column",
+    alignItems: "flex-end",
+    gap: 16,
+  },
+  approveRequestsFab: {
+    backgroundColor: "#F59E0B",
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 6,
+    shadowColor: "#F59E0B",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    position: "relative",
+  },
+  approveRequestsText: {
+    fontSize: 24,
+  },
+  approveRequestsLabel: {
+    color: "#FFF",
+    fontSize: 9,
+    fontWeight: "700",
+    marginTop: -2,
+  },
+  badge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    backgroundColor: "#EF4444",
+    borderRadius: 12,
+    minWidth: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#0F172A",
+    paddingHorizontal: 6,
+  },
+  badgeText: {
+    color: "#FFF",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  fab: {
     backgroundColor: "#6366F1",
     width: 64,
     height: 64,

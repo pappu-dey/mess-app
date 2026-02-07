@@ -274,7 +274,29 @@ export default function JoinMess() {
       const userData = userSnap.exists() ? (userSnap.data() as UserData) : {};
       const userName = userData?.name || user.displayName || user.email?.split("@")[0] || "Member";
 
-      // 4. Check if user is already in another mess
+      // 4. Check for EXISTING PENDING MEMBER by email
+      // This prevents duplicates if the manager added them by email previously
+      let pendingMemberId = null;
+      let pendingMemberData = null;
+
+      if (user.email) {
+        const { collection, query, where, getDocs } = await import("firebase/firestore");
+        const membersRef = collection(db, "messes", messCode, "members");
+        const q = query(membersRef, where("email", "==", user.email));
+        const querySnapshot = await getDocs(q);
+
+        if (!querySnapshot.empty) {
+          // Found a pending member with this email!
+          const doc = querySnapshot.docs[0];
+          if (doc.id !== user.uid) {
+            console.log("Found pending member with different ID:", doc.id);
+            pendingMemberId = doc.id;
+            pendingMemberData = doc.data();
+          }
+        }
+      }
+
+      // 5. Check if user is already in another mess
       if (userData?.messId && userData.messId !== messCode) {
         Alert.alert(
           "Already in a Mess",
@@ -288,15 +310,15 @@ export default function JoinMess() {
             {
               text: "Switch Mess",
               style: "destructive",
-              onPress: () => proceedWithJoin(messCode, messRef, memberRef, userName),
+              onPress: () => proceedWithJoin(messCode, messRef, memberRef, userName, pendingMemberId),
             },
           ]
         );
         return;
       }
 
-      // 5. Proceed with joining
-      await proceedWithJoin(messCode, messRef, memberRef, userName);
+      // 6. Proceed with joining
+      await proceedWithJoin(messCode, messRef, memberRef, userName, pendingMemberId);
     } catch (err: any) {
       console.error("Join mess error:", err);
       shake();
@@ -323,16 +345,27 @@ export default function JoinMess() {
     messCode: string,
     messRef: any,
     memberRef: any,
-    userName: string
+    userName: string,
+    pendingMemberId: string | null = null
   ) => {
     try {
       const user = auth.currentUser;
       if (!user) throw new Error("User not authenticated");
 
-      // 1. Create member document in subcollection
+      const { deleteDoc } = await import("firebase/firestore");
+
+      // 0. If there's a pending member entry, delete it first (migration)
+      if (pendingMemberId) {
+        console.log("Migrating pending member:", pendingMemberId);
+        const pendingRef = doc(db, "messes", messCode, "members", pendingMemberId);
+        await deleteDoc(pendingRef);
+      }
+
+      // 1. Create member document in subcollection (using REAL uid)
+      // We use the User's own name property, overwriting whatever the manager set.
       await setDoc(memberRef, {
         uid: user.uid,
-        name: userName,
+        name: userName, // <--- Using the name from User Profile
         email: user.email || "",
         role: "member",
         joinedAt: serverTimestamp(),
@@ -340,12 +373,18 @@ export default function JoinMess() {
         isActive: true,
       });
 
-      // 2. Update mess document (atomic operations)
-      await updateDoc(messRef, {
+      // 2. Update mess document
+      // If we migrated, the count is already correct. If new, increment.
+      const updatePayload: any = {
         members: arrayUnion(user.uid),
-        memberCount: increment(1),
         updatedAt: serverTimestamp(),
-      });
+      };
+
+      if (!pendingMemberId) {
+        updatePayload.memberCount = increment(1);
+      }
+
+      await updateDoc(messRef, updatePayload);
 
       // 3. Update user document
       await setDoc(

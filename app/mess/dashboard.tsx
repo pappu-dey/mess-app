@@ -5,15 +5,20 @@ import {
   collection,
   doc,
   getDocs,
+  updateDoc,
   writeBatch
 } from "firebase/firestore";
 import {
   Calendar,
+  Check,
   Clock,
   Copy,
   Crown,
+  Edit2,
   LogOut,
   Mail,
+  MessageCircle,
+  PlusCircle,
   Receipt,
   Settings,
   Share2,
@@ -26,14 +31,17 @@ import {
   UsersRound,
   UtensilsCrossed,
   Wallet,
-  X,
+  X
 } from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
+
 
 import {
   ActivityIndicator,
   Alert,
   Animated,
+  Image,
+  Linking,
   Modal,
   RefreshControl,
   ScrollView,
@@ -41,7 +49,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  View,
+  View
 } from "react-native";
 import LogoutModal from "../../components/LogoutModal";
 import { useApp } from "../../context/AppContext";
@@ -54,6 +62,7 @@ export default function Dashboard() {
   const { isOffline } = useNetwork();
   const {
     user,
+    setUser,
     mess,
     members: contextMembers,
     clearMessData,
@@ -68,6 +77,9 @@ export default function Dashboard() {
   const [deleteMessIdInput, setDeleteMessIdInput] = useState("");
   const [networkError, setNetworkError] = useState<string | null>(null);
   const [lastDataUpdate, setLastDataUpdate] = useState<Date | null>(null);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editedName, setEditedName] = useState(user?.name ?? "");
+
 
   // Use cached data from context
   const houseStats = dashboardData.stats || {
@@ -164,6 +176,37 @@ export default function Dashboard() {
     }
   };
 
+
+
+  // Function to update name
+  const handleNameUpdate = async () => {
+    if (!user) return;
+
+    if (editedName.trim() === '') {
+      Alert.alert('Error', 'Name cannot be empty');
+      return;
+    }
+
+    if (editedName === user.name) {
+      setIsEditingName(false);
+      return;
+    }
+
+    try {
+      const userRef = doc(db, 'users', user.uid);
+      await updateDoc(userRef, {
+        name: editedName.trim(),
+      });
+
+      setUser({ ...user, name: editedName.trim() });
+      setIsEditingName(false);
+      Alert.alert('Success', 'Name updated successfully!');
+    } catch (error) {
+      console.error('Error updating name:', error);
+      Alert.alert('Error', 'Failed to update name');
+    }
+  };
+
   const handleExitMess = async () => {
     Alert.alert("Leave Mess", "Are you sure you want to leave this mess?", [
       {
@@ -178,18 +221,11 @@ export default function Dashboard() {
             const currentUser = auth.currentUser;
             if (!currentUser || !mess?.id) return;
 
-            const { updateDoc, serverTimestamp, deleteDoc } =
+            const { writeBatch, serverTimestamp } =
               await import("firebase/firestore");
+
+            const batch = writeBatch(db);
             const userRef = doc(db, "users", currentUser.uid);
-
-            // Remove user from mess
-            await updateDoc(userRef, {
-              messId: null,
-              role: null,
-              updatedAt: serverTimestamp(),
-            });
-
-            // Delete member document
             const memberRef = doc(
               db,
               "messes",
@@ -197,12 +233,21 @@ export default function Dashboard() {
               "members",
               currentUser.uid,
             );
-            await deleteDoc(memberRef);
+
+            // Remove user from mess (atomic update)
+            batch.update(userRef, {
+              messId: null,
+              role: null,
+              updatedAt: serverTimestamp(),
+            });
+
+            // Delete member document
+            batch.delete(memberRef);
+
+            await batch.commit();
 
             // Clear mess data from context
             clearMessData();
-
-            router.replace("/mess/select");
           } catch (error) {
             console.error("Error exiting mess:", error);
             Alert.alert("Error", "Failed to exit mess");
@@ -480,7 +525,6 @@ export default function Dashboard() {
       )}
 
       {/* Profile Modal */}
-      {/* Profile Modal */}
       <Modal
         visible={showProfile}
         transparent={true}
@@ -498,7 +542,14 @@ export default function Dashboard() {
             <View style={styles.modalHeader}>
               <View style={styles.avatarContainer}>
                 <View style={styles.avatar}>
-                  <User size={40} color="#FFFFFF" strokeWidth={2.5} />
+                  {user.photoURL ? (
+                    <Image
+                      source={{ uri: user.photoURL }}
+                      style={styles.avatarImage}
+                    />
+                  ) : (
+                    <User size={40} color="#FFFFFF" strokeWidth={2.5} />
+                  )}
                 </View>
               </View>
               <TouchableOpacity
@@ -514,14 +565,52 @@ export default function Dashboard() {
 
             {/* Profile Information */}
             <View style={styles.profileContent}>
-              {/* Name */}
+              {/* Name with Edit */}
               <View style={styles.profileSection}>
                 <View style={styles.profileIconContainer}>
                   <User size={20} color="#6366F1" strokeWidth={2} />
                 </View>
                 <View style={styles.profileInfo}>
                   <Text style={styles.profileLabel}>Name</Text>
-                  <Text style={styles.profileValue}>{user.name}</Text>
+                  {isEditingName ? (
+                    <View style={styles.editNameContainer}>
+                      <TextInput
+                        style={styles.editNameInput}
+                        value={editedName}
+                        onChangeText={setEditedName}
+                        autoFocus
+                        placeholder="Enter your name"
+                      />
+                      <TouchableOpacity
+                        style={styles.editIconButton}
+                        onPress={handleNameUpdate}
+                      >
+                        <Check size={18} color="#10B981" strokeWidth={2.5} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.editIconButton}
+                        onPress={() => {
+                          setEditedName(user.name);
+                          setIsEditingName(false);
+                        }}
+                      >
+                        <X size={18} color="#EF4444" strokeWidth={2.5} />
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.nameDisplayContainer}>
+                      <Text style={styles.profileValue}>{user.name}</Text>
+                      <TouchableOpacity
+                        style={styles.editIconButton}
+                        onPress={() => {
+                          setEditedName(user.name);
+                          setIsEditingName(true);
+                        }}
+                      >
+                        <Edit2 size={16} color="#6366F1" strokeWidth={2} />
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
               </View>
 
@@ -601,6 +690,21 @@ export default function Dashboard() {
             {/* Action Buttons */}
             <View style={styles.modalButtons}>
               <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonPrimary]}
+                onPress={() => {
+                  setShowProfile(false);
+                  const subject = encodeURIComponent('Support Request');
+                  const body = encodeURIComponent(
+                    `Name: ${user.name}\nUser ID: ${user.uid}\n\n[Please describe your issue here]`
+                  );
+                  Linking.openURL(`mailto:xtpdev@gmail.com?subject=${subject}&body=${body}`);
+                }}
+              >
+                <MessageCircle size={18} color="#FFFFFF" strokeWidth={2} />
+                <Text style={styles.modalButtonText}>Contact Support</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
                 style={[styles.modalButton, styles.modalButtonDanger]}
                 onPress={() => {
                   Alert.alert(
@@ -613,7 +717,7 @@ export default function Dashboard() {
                         style: "destructive",
                         onPress: () => {
                           setShowProfile(false);
-                          setTimeout(handleLogout, 300); // slight delay for modal to close
+                          setTimeout(handleLogout, 300);
                         },
                       },
                     ],
@@ -624,19 +728,10 @@ export default function Dashboard() {
                 <LogOut size={18} color="#FFFFFF" strokeWidth={2} />
                 <Text style={styles.modalButtonText}>Logout</Text>
               </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonSecondary]}
-                onPress={() => setShowProfile(false)}
-              >
-                <X size={18} color="#94A3B8" strokeWidth={2} />
-                <Text style={styles.modalButtonTextSecondary}>Close</Text>
-              </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
-
       {/* Notifications Modal */}
       <Modal
         visible={showNotifications}
@@ -1025,69 +1120,92 @@ export default function Dashboard() {
 
           {/* Member Transaction Buttons (Members Only) */}
           {user.role === "member" && (
-            <View style={styles.actionButtonsContainer}>
-              {/* Deposit History */}
-              <TouchableOpacity
-                style={[styles.actionButton, styles.actionButtonGreen]}
-                onPress={() => {
-                  const monthStr = `${selectedMonth.getFullYear()}-${String(selectedMonth.getMonth() + 1).padStart(2, "0")}`;
-                  router.push(`/mess/deposits?month=${monthStr}`);
-                }}
-                activeOpacity={0.75}
-              >
-                <Wallet size={22} color="#fff" />
-                <View style={styles.actionButtonTextContainer}>
-                  <Text style={styles.actionButtonLabel}>View</Text>
-                  <Text style={styles.actionButtonTitle}>Deposit History</Text>
-                </View>
-              </TouchableOpacity>
+            <>
+              <View style={styles.actionButtonsContainer}>
+                {/* Deposit History */}
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.actionButtonGreen]}
+                  onPress={() => {
+                    const monthStr = `${selectedMonth.getFullYear()}-${String(
+                      selectedMonth.getMonth() + 1
+                    ).padStart(2, "0")}`;
+                    router.push(`/mess/deposits?month=${monthStr}`);
+                  }}
+                  activeOpacity={0.75}
+                >
+                  <Wallet size={22} color="#fff" />
+                  <View style={styles.actionButtonTextContainer}>
+                    <Text style={styles.actionButtonLabel}>View</Text>
+                    <Text style={styles.actionButtonTitle}>Deposit History</Text>
+                  </View>
+                </TouchableOpacity>
 
-              {/* Expense History */}
-              <TouchableOpacity
-                style={[styles.actionButton, styles.actionButtonRed]}
-                onPress={() => {
-                  const monthStr = `${selectedMonth.getFullYear()}-${String(selectedMonth.getMonth() + 1).padStart(2, "0")}`;
-                  router.push(`/mess/expenses?month=${monthStr}`);
-                }}
-                activeOpacity={0.75}
-              >
-                <Receipt size={22} color="#fff" />
-                <View style={styles.actionButtonTextContainer}>
-                  <Text style={styles.actionButtonLabel}>View</Text>
-                  <Text style={styles.actionButtonTitle}>Expense History</Text>
-                </View>
-              </TouchableOpacity>
+                {/* Expense History */}
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.actionButtonRed]}
+                  onPress={() => {
+                    const monthStr = `${selectedMonth.getFullYear()}-${String(
+                      selectedMonth.getMonth() + 1
+                    ).padStart(2, "0")}`;
+                    router.push(`/mess/expenses?month=${monthStr}`);
+                  }}
+                  activeOpacity={0.75}
+                >
+                  <Receipt size={22} color="#fff" />
+                  <View style={styles.actionButtonTextContainer}>
+                    <Text style={styles.actionButtonLabel}>View</Text>
+                    <Text style={styles.actionButtonTitle}>Expense History</Text>
+                  </View>
+                </TouchableOpacity>
 
-              {/* Meal History */}
-              <TouchableOpacity
-                style={[styles.actionButton, styles.actionButtonBlue]}
-                onPress={() => {
-                  const monthStr = `${selectedMonth.getFullYear()}-${String(selectedMonth.getMonth() + 1).padStart(2, "0")}`;
-                  router.push(`/mess/meals?month=${monthStr}`);
-                }}
-                activeOpacity={0.75}
-              >
-                <UtensilsCrossed size={22} color="#fff" />
-                <View style={styles.actionButtonTextContainer}>
-                  <Text style={styles.actionButtonLabel}>View</Text>
-                  <Text style={styles.actionButtonTitle}>Meal History</Text>
-                </View>
-              </TouchableOpacity>
+                {/* Meal History */}
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.actionButtonBlue]}
+                  onPress={() => {
+                    const monthStr = `${selectedMonth.getFullYear()}-${String(
+                      selectedMonth.getMonth() + 1
+                    ).padStart(2, "0")}`;
+                    router.push(`/mess/meals?month=${monthStr}`);
+                  }}
+                  activeOpacity={0.75}
+                >
+                  <UtensilsCrossed size={22} color="#fff" />
+                  <View style={styles.actionButtonTextContainer}>
+                    <Text style={styles.actionButtonLabel}>View</Text>
+                    <Text style={styles.actionButtonTitle}>Meal History</Text>
+                  </View>
+                </TouchableOpacity>
 
-              {/* Member List */}
-              <TouchableOpacity
-                style={[styles.actionButton, styles.actionButtonPurple]}
-                onPress={() => router.push("/mess/members")} // view only
-                activeOpacity={0.75}
-              >
-                <Users size={22} color="#fff" />
-                <View style={styles.actionButtonTextContainer}>
-                  <Text style={styles.actionButtonLabel}>View</Text>
-                  <Text style={styles.actionButtonTitle}>Member List</Text>
-                </View>
-              </TouchableOpacity>
-            </View>
+                {/* Member List */}
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.actionButtonPurple]}
+                  onPress={() => router.push("/mess/members")}
+                  activeOpacity={0.75}
+                >
+                  <Users size={22} color="#fff" />
+                  <View style={styles.actionButtonTextContainer}>
+                    <Text style={styles.actionButtonLabel}>View</Text>
+                    <Text style={styles.actionButtonTitle}>Member List</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+
+              {/* Centered Submit Expense Request Button */}
+              <View style={styles.centeredButtonContainer}>
+                <TouchableOpacity
+                  style={styles.submitExpenseButton}
+                  onPress={() => router.push("/mess/expense_requests")}
+                  activeOpacity={0.75}
+                >
+                  <PlusCircle size={24} color="#fff" />
+                  <Text style={styles.submitExpenseButtonText}>
+                    Submit Expense Request to Manager
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </>
           )}
+
 
           {/* Members Table */}
           <View style={styles.membersCard}>
@@ -1180,83 +1298,87 @@ export default function Dashboard() {
       </Animated.View>
 
       {/* Manager Action Menu */}
-      {user.role === "manager" && showActionMenu && (
-        <View style={styles.actionMenuOverlay}>
-          <TouchableOpacity
-            style={styles.actionMenuBackdrop}
-            activeOpacity={1}
-            onPress={() => setShowActionMenu(false)}
-          />
-
-          <View style={styles.actionMenuContainer}>
-            {/* Add Member */}
+      {
+        user.role === "manager" && showActionMenu && (
+          <View style={styles.actionMenuOverlay}>
             <TouchableOpacity
-              style={styles.actionMenuItem}
-              onPress={() => handleAction("Add Member")}
-            >
-              <View style={styles.actionMenuIcon}>
-                <UserPlus size={18} color="#2563EB" />
-              </View>
-              <Text style={styles.actionMenuText}>Add Member</Text>
-            </TouchableOpacity>
+              style={styles.actionMenuBackdrop}
+              activeOpacity={1}
+              onPress={() => setShowActionMenu(false)}
+            />
 
-            {/* Add Deposit */}
-            <TouchableOpacity
-              style={styles.actionMenuItem}
-              onPress={() => handleAction("Add Deposit")}
-            >
-              <View style={styles.actionMenuIcon}>
-                <Wallet size={18} color="#16A34A" />
-              </View>
-              <Text style={styles.actionMenuText}>Add Deposit</Text>
-            </TouchableOpacity>
+            <View style={styles.actionMenuContainer}>
+              {/* Add Member */}
+              <TouchableOpacity
+                style={styles.actionMenuItem}
+                onPress={() => handleAction("Add Member")}
+              >
+                <View style={styles.actionMenuIcon}>
+                  <UserPlus size={18} color="#2563EB" />
+                </View>
+                <Text style={styles.actionMenuText}>Add Member</Text>
+              </TouchableOpacity>
 
-            {/* Add Expense */}
-            <TouchableOpacity
-              style={styles.actionMenuItem}
-              onPress={() => handleAction("Add Expense")}
-            >
-              <View style={styles.actionMenuIcon}>
-                <ShoppingCart size={18} color="#DC2626" />
-              </View>
-              <Text style={styles.actionMenuText}>Add Expense</Text>
-            </TouchableOpacity>
+              {/* Add Deposit */}
+              <TouchableOpacity
+                style={styles.actionMenuItem}
+                onPress={() => handleAction("Add Deposit")}
+              >
+                <View style={styles.actionMenuIcon}>
+                  <Wallet size={18} color="#16A34A" />
+                </View>
+                <Text style={styles.actionMenuText}>Add Deposit</Text>
+              </TouchableOpacity>
 
-            {/* Meal Entry */}
-            <TouchableOpacity
-              style={styles.actionMenuItem}
-              onPress={() => handleAction("Meal Entry")}
-            >
-              <View style={styles.actionMenuIcon}>
-                <UtensilsCrossed size={18} color="#2563EB" />
-              </View>
-              <Text style={styles.actionMenuText}>Meal Entry</Text>
-            </TouchableOpacity>
+              {/* Add Expense */}
+              <TouchableOpacity
+                style={styles.actionMenuItem}
+                onPress={() => handleAction("Add Expense")}
+              >
+                <View style={styles.actionMenuIcon}>
+                  <ShoppingCart size={18} color="#DC2626" />
+                </View>
+                <Text style={styles.actionMenuText}>Add Expense</Text>
+              </TouchableOpacity>
 
-            {/* Add Guest Meal */}
-            <TouchableOpacity
-              style={styles.actionMenuItem}
-              onPress={() => handleAction("Add Guest Meal")}
-            >
-              <View style={styles.actionMenuIcon}>
-                <UsersRound size={18} color="#10B981" />
-              </View>
-              <Text style={styles.actionMenuText}>Add Guest Meal</Text>
-            </TouchableOpacity>
+              {/* Meal Entry */}
+              <TouchableOpacity
+                style={styles.actionMenuItem}
+                onPress={() => handleAction("Meal Entry")}
+              >
+                <View style={styles.actionMenuIcon}>
+                  <UtensilsCrossed size={18} color="#2563EB" />
+                </View>
+                <Text style={styles.actionMenuText}>Meal Entry</Text>
+              </TouchableOpacity>
+
+              {/* Add Guest Meal */}
+              <TouchableOpacity
+                style={styles.actionMenuItem}
+                onPress={() => handleAction("Add Guest Meal")}
+              >
+                <View style={styles.actionMenuIcon}>
+                  <UsersRound size={18} color="#10B981" />
+                </View>
+                <Text style={styles.actionMenuText}>Add Guest Meal</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
-      )}
+        )
+      }
 
       {/* Floating Action Button (Manager Only) */}
-      {user.role === "manager" && (
-        <TouchableOpacity
-          style={styles.fab}
-          onPress={() => setShowActionMenu(!showActionMenu)}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.fabText}>+</Text>
-        </TouchableOpacity>
-      )}
+      {
+        user.role === "manager" && (
+          <TouchableOpacity
+            style={styles.fab}
+            onPress={() => setShowActionMenu(!showActionMenu)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.fabText}>+</Text>
+          </TouchableOpacity>
+        )
+      }
 
       {/* Logout Confirmation Modal */}
       <LogoutModal
@@ -1267,7 +1389,7 @@ export default function Dashboard() {
         showExitMess={true}
       />
 
-    </View>
+    </View >
   );
 }
 
@@ -1535,7 +1657,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 12,
-    marginBottom: 24,
+    marginBottom: 12,
   },
   actionButton: {
     flex: 1,
@@ -1544,7 +1666,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 16,
     borderRadius: 16,
-    gap: 12,
+    gap: 8,
   },
   actionButtonGreen: {
     backgroundColor: "#10B981",
@@ -1866,7 +1988,7 @@ const styles = StyleSheet.create({
     padding: 24,
     width: "90%",
     maxWidth: 400,
-    marginBottom: 48,
+    marginBottom: 38,
     borderWidth: 1,
     borderColor: "#334155",
     shadowColor: "#000",
@@ -1877,7 +1999,7 @@ const styles = StyleSheet.create({
   },
   modalHeader: {
     alignItems: "center",
-    marginBottom: 16,
+    marginBottom: 10,
     position: "relative",
   },
   avatarContainer: {
@@ -1907,21 +2029,21 @@ const styles = StyleSheet.create({
     borderColor: "#334155",
   },
   modalTitle: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: "800",
     color: "#FFFFFF",
     textAlign: "center",
     marginBottom: 4,
   },
   modalSubtitle: {
-    fontSize: 13,
+    fontSize: 12,
     color: "#94A3B8",
     textAlign: "center",
-    marginBottom: 24,
+    marginBottom: 14,
   },
   profileContent: {
     gap: 12,
-    marginBottom: 24,
+    marginBottom: 14,
   },
   profileSection: {
     flexDirection: "row",
@@ -2001,12 +2123,12 @@ const styles = StyleSheet.create({
   },
   modalButtonText: {
     color: "#FFFFFF",
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: "700",
   },
   modalButtonTextSecondary: {
     color: "#94A3B8",
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: "700",
   },
   roleBadge: {
@@ -2147,4 +2269,63 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
   },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 40,
+  },
+  cameraIconOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    backgroundColor: '#6366F1',
+    borderRadius: 12,
+    padding: 4,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  editNameContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  editNameInput: {
+    flex: 1,
+    fontSize: 15,
+    color: '#1E293B',
+    fontWeight: '600',
+    borderBottomWidth: 1,
+    borderBottomColor: '#6366F1',
+    paddingVertical: 4,
+  },
+  nameDisplayContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  editIconButton: {
+    padding: 4,
+  },
+  centeredButtonContainer: {
+    alignItems: "center",
+    marginTop: 4,
+    marginBottom: 14,
+  },
+  submitExpenseButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F97316",
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderRadius: 13,
+    gap: 10,
+  },
+  submitExpenseButtonText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+
 });
